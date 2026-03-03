@@ -4,6 +4,17 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>MaruApp — Panel de Gestión</title>
+
+<!-- PWA para iOS -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="faf7f2">
+<meta name="apple-mobile-web-app-title" content="MaruApp — Panel de Gestión">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#faf7f2">
+<link rel="icon" type="image/png" sizes="32x32" href="maruapp.ico">
+<link rel="icon" type="image/png" sizes="16x16" href="maruapp.ico">
+<link rel="apple-touch-icon" href="maruapp.ico">
+
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
 <style>
 :root{--brown-deep:#593A29; --brown-mid:#8b5c43; --brown-light:#d1baae; --green-pale:#b7e4c7;  --green-deep:#1a3a2a;--green-mid:#2d6a4f;--green-light:#52b788;--green-pale:#b7e4c7;--green-mist:#d8f3dc;--cream:#faf7f2;--cream-dark:#f0ebe1;--text-dark:#1a2515;--text-mid:#3d5a3e;--text-muted:#7a9b7c;--white:#fff;--shadow-sm:0 2px 8px rgba(26,58,42,.08);--shadow-lg:0 8px 40px rgba(26,58,42,.18);--radius:16px;--radius-sm:10px}
@@ -276,6 +287,23 @@ textarea{resize:vertical;min-height:80px}
 /* HC save bar */
 .hc-save-bar{display:flex;justify-content:flex-end;gap:10px;margin-top:8px;padding-top:16px;border-top:1px solid var(--cream-dark)}
 
+
+/* ── Módulo Consultorios ──────────────────────────────────────────────────── */
+.cons-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;margin-top:8px}
+.cons-card{background:white;border-radius:var(--radius);padding:20px;box-shadow:var(--shadow-sm);border:1px solid rgba(0,0,0,.04);border-left:4px solid var(--green-light)}
+.cons-card h3{font-size:1rem;font-family:'Playfair Display',serif;margin-bottom:6px;color:var(--text-dark)}
+.cons-card .cons-dir{font-size:.8rem;color:var(--text-muted);margin-bottom:12px}
+.cons-comision{display:inline-flex;align-items:center;gap:6px;background:var(--green-mist);padding:4px 12px;border-radius:20px;font-size:.8rem;font-weight:600;color:var(--green-mid)}
+.cons-actions{display:flex;gap:8px;margin-top:14px;padding-top:14px;border-top:1px solid var(--cream-dark)}
+/* Finanzas — neto */
+.monto-bruto{font-size:.75rem;color:var(--text-muted);text-decoration:line-through}
+.monto-neto{font-weight:700;color:var(--green-mid)}
+.comision-badge{display:inline-flex;align-items:center;gap:3px;font-size:.68rem;padding:2px 7px;border-radius:10px;background:#fff0f0;color:#c0392b;font-weight:500}
+.fin-stat-neto{background:linear-gradient(135deg,var(--green-deep),var(--green-mid));color:white}
+.fin-stat-neto .stat-value{color:white!important}
+.fin-stat-neto .stat-label{color:rgba(255,255,255,.7)!important}
+.fin-stat-neto .stat-icon{background:rgba(255,255,255,.15)!important;border-radius:10px}
+
 </style>
 <!-- React debe cargar ANTES del module script -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.development.js"></script>
@@ -545,10 +573,11 @@ function App() {
     {id:'agenda',icon:'🗓️',label:'Agenda'},
     ...(can('verFin') ? [{id:'finanzas',icon:'💰',label:'Finanzas'}] : []),
     {id:'ebooks',icon:'📚',label:'Ebooks'},
+    ...(isAdmin ? [{id:'consultorios',icon:'🏥',label:'Consultorios'}] : []),
     ...(isAdmin ? [{id:'usuarios',icon:'🔐',label:'Usuarios'}] : []),
   ];
 
-  const titles = {dashboard:'Buen dia',pacientes:'Pacientes','paciente-detalle':'Ficha del paciente',agenda:'Agenda',finanzas:'Finanzas',ebooks:'Ebooks',usuarios:'Usuarios','add-paciente':'Nuevo paciente','add-turno':'Nuevo turno','add-ingreso':'Registrar ingreso','add-ebook':'Nuevo ebook'};
+  const titles = {dashboard:'Buen dia',pacientes:'Pacientes','paciente-detalle':'Ficha del paciente',agenda:'Agenda',finanzas:'Finanzas',ebooks:'Ebooks',usuarios:'Usuarios',consultorios:'Consultorios','add-paciente':'Nuevo paciente','add-turno':'Nuevo turno','add-ingreso':'Registrar ingreso','add-ebook':'Nuevo ebook'};
 
   return div({className:'app-shell'},
     sidebar && div({className:'overlay-bg show', onClick:()=>setSidebar(false)}),
@@ -602,10 +631,16 @@ function App() {
   onUpdate:(id,data)=>updateFB('turnos',id,data).then(()=>showToast('Turno actualizado')),
   onUpdEst:(id,estado)=>updateFB('turnos',id,{estado}).then(()=>showToast('Turno actualizado')),
   onUpdatePac:(id,data)=>updateFB('pacientes',id,data),
+  onAddIngreso:(data)=>addFB('ingresos',data),
   onDel:id=>swalConfirm('Eliminar turno','El turno sera eliminado permanentemente').then(r=>r.isConfirmed&&delFB('turnos',id).then(()=>showToast('Turno eliminado')))
 }),
-        page==='finanzas'&&can('verFin') && e(Finanzas, {ingresos,can,onDel:id=>swalConfirm('Eliminar ingreso','Esta accion no se puede deshacer').then(r=>r.isConfirmed&&delFB('ingresos',id).then(()=>showToast('Ingreso eliminado')))}),
+        page==='finanzas'&&can('verFin') && e(Finanzas, {ingresos,consultorios,can,onDel:id=>swalConfirm('Eliminar ingreso','Esta accion no se puede deshacer').then(r=>r.isConfirmed&&delFB('ingresos',id).then(()=>showToast('Ingreso eliminado')))}),
         page==='ebooks' && e(Ebooks, {ebooks,can,showToast,onUpdate:(id,d)=>updateFB('ebooks',id,d).then(()=>showToast('Actualizado')),onDel:id=>swalConfirm('Eliminar ebook','Esta accion no se puede deshacer').then(r=>r.isConfirmed&&delFB('ebooks',id).then(()=>showToast('Ebook eliminado'))),onVenta:(id,v)=>updateFB('ebooks',id,{ventas:v}).then(()=>showToast('Venta registrada'))}),
+        page==='consultorios'&&isAdmin && e(Consultorios, {consultorios,
+          onSave: d=>addFB('consultorios',d).then(()=>showToast('Consultorio creado')),
+          onUpdate:(id,d)=>updateFB('consultorios',id,d).then(()=>showToast('Consultorio actualizado')),
+          onDel:id=>swalConfirm('Eliminar consultorio','Los turnos existentes no se veran afectados').then(r=>r.isConfirmed&&delFB('consultorios',id).then(()=>showToast('Consultorio eliminado')))
+        }),
         page==='usuarios'&&isAdmin && e(Usuarios, {usuarios,user,showToast,db,auth}),
         page==='add-paciente'&&can('editPac') && e(FormPaciente, {onCancel:()=>navigate('pacientes'),onSave:p=>addFB('pacientes',p).then(()=>{showToast('Paciente agregado');navigate('pacientes');})}),
         page==='add-turno'&&can('editTurno') && e(FormTurno, {pacs,consultorios,onCancel:()=>navigate('agenda'),
@@ -1153,7 +1188,7 @@ function PacienteDetalle({pac, navigate, setSelPac, can, showToast, onUpdate}) {
 )};
 
 // ─── AGENDA ───────────────────────────────────────────────────────────────────
-function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate, onUpdEst, onUpdatePac, onDel}) {
+function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate, onUpdEst, onUpdatePac, onAddIngreso, onDel}) {
   const hoy = today();
   const [selFecha,  setSelFecha]  = useState(hoy);
   const [filtCons,  setFiltCons]  = useState('todos');
@@ -1174,13 +1209,24 @@ function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate,
     catch(ex){ return d; }
   };
 
-  const exportarDia = () => exportXLS(
-    tDelDia.map(t => ({...t, consultorioNombre: nombreCons(t.consultorioId)})),
-    [{key:'hora',label:'Hora'},{key:'pacienteNombre',label:'Paciente'},{key:'tipo',label:'Tipo'},
-     {key:'estado',label:'Estado'},{key:'consultorioNombre',label:'Consultorio'},
-     {key:'monto',label:'Monto (ARS)'},{key:'notas',label:'Notas'}],
-    'agenda_'+selFecha
-  );
+  const COLS_AGENDA = [{key:'fecha',label:'Fecha'},{key:'hora',label:'Hora'},{key:'pacienteNombre',label:'Paciente'},
+    {key:'tipo',label:'Tipo'},{key:'estado',label:'Estado'},{key:'asistencia',label:'Asistencia'},
+    {key:'consultorioNombre',label:'Consultorio'},{key:'monto',label:'Monto (ARS)'},{key:'notas',label:'Notas'}];
+  const withConsNombre = arr => arr.map(t => ({...t, consultorioNombre: nombreCons(t.consultorioId)}));
+
+  const exportarDia = () => exportXLS(withConsNombre(tDelDia), COLS_AGENDA, 'agenda_'+selFecha);
+
+  const exportarMes = () => {
+    const mes = selFecha.slice(0,7);
+    const data = withConsNombre(turnos.filter(t => t.fecha.startsWith(mes)).sort((a,b)=>a.fecha.localeCompare(b.fecha)||a.hora.localeCompare(b.hora)));
+    exportXLS(data, COLS_AGENDA, 'agenda_mes_'+mes);
+  };
+
+  const exportarAnio = () => {
+    const anio = selFecha.slice(0,4);
+    const data = withConsNombre(turnos.filter(t => t.fecha.startsWith(anio)).sort((a,b)=>a.fecha.localeCompare(b.fecha)||a.hora.localeCompare(b.hora)));
+    exportXLS(data, COLS_AGENDA, 'agenda_anio_'+anio);
+  };
 
   const guardarEdicion = async () => {
     if (!editTurno) return;
@@ -1206,7 +1252,28 @@ function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate,
     // Actualizar estado del turno
     const nuevoEstado = tipo === 'asistio' ? 'Confirmado' : tipo === 'noAsistio' ? 'Cancelado' : t.estado;
     await onUpdate(t.id, { asistencia: tipo, estado: nuevoEstado });
-    showToast(tipoLabel + ' registrado en el historial');
+    // Si asistió → cobro automático en Finanzas
+    if (tipo === 'asistio' && t.monto > 0) {
+      const cons = consultorios.find(c => c.id === t.consultorioId);
+      const comisionPct = cons?.comision ? Number(cons.comision) : 0;
+      const montoComision = comisionPct > 0 ? Math.round(t.monto * comisionPct / 100) : 0;
+      const montoNeto = t.monto - montoComision;
+      await onAddIngreso({
+        descripcion: t.pacienteNombre + ' — ' + t.tipo,
+        tipo: 'consulta',
+        fecha: t.fecha,
+        monto: t.monto,
+        montoNeto,
+        montoComision,
+        comisionPct,
+        consultorioId: t.consultorioId || '',
+        consultorioNombre: nombreCons(t.consultorioId),
+        metodoPago: 'Efectivo',
+        turnoId: t.id,
+        origenTurno: true
+      });
+    }
+    showToast(tipo === 'asistio' ? '✅ Asistencia registrada y cobro guardado en Finanzas' : tipoLabel + ' registrado');
   };
 
   // Sub-componente tarjeta de turno
@@ -1283,7 +1350,28 @@ function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate,
         cls: agrupar ? 'btn-primary' : 'btn-secondary', sm:true, onClick:()=>setAgrupar(!agrupar)
       }, agrupar ? '⊞ Agrupado' : '⊞ Agrupar por consultorio'),
       div({style:{flex:1}}),
-      Btn({cls:'btn-secondary',sm:true,onClick:exportarDia}, '📥 Exportar día'),
+      div({style:{position:'relative',display:'inline-block'}},
+        e('details',{style:{display:'inline-block'}},
+          e('summary',{style:{
+            padding:'6px 12px',background:'var(--cream-dark)',border:'1.5px solid #ddd',borderRadius:'var(--radius-sm)',
+            cursor:'pointer',fontSize:'.82rem',fontWeight:500,color:'var(--text-mid)',listStyle:'none',display:'inline-flex',alignItems:'center',gap:6
+          }}, '📥 Exportar ▾'),
+          div({style:{
+            position:'absolute',right:0,top:'calc(100% + 4px)',background:'white',border:'1px solid #ddd',
+            borderRadius:'var(--radius-sm)',boxShadow:'0 4px 16px rgba(0,0,0,.12)',zIndex:200,minWidth:160,overflow:'hidden'
+          }},
+            ...[ ['📅 Este día',  exportarDia],
+                 ['📆 Este mes',  exportarMes],
+                 ['📊 Este año',  exportarAnio]
+            ].map(([lbl_,fn]) => div({
+              key:lbl_, onClick:fn,
+              style:{padding:'10px 16px',cursor:'pointer',fontSize:'.82rem',color:'var(--text-dark)',borderBottom:'1px solid var(--cream-dark)',transition:'background .15s'},
+              onMouseOver:ev=>ev.currentTarget.style.background='var(--green-mist)',
+              onMouseOut:ev=>ev.currentTarget.style.background='white'
+            }, lbl_))
+          )
+        )
+      ),
       can('editTurno') && Btn({sm:true,onClick:()=>navigate('add-turno')}, '+ Nuevo turno')
     ),
 
@@ -1368,42 +1456,80 @@ function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate,
 
 
 // ─── FINANZAS ─────────────────────────────────────────────────────────────────
-function Finanzas({ingresos, can, onDel}) {
+function Finanzas({ingresos, consultorios, can, onDel}) {
   const [filter, setFilter] = useState('todos');
   const [mes, setMes] = useState(mesNow());
   const filtered = ingresos.filter(i=>(filter==='todos'||i.tipo===filter)&&(!mes||(i.fecha||'').startsWith(mes))).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
-  const total = filtered.reduce((s,i)=>s+Number(i.monto||0),0);
+
+  // Totales brutos por tipo
   const tot = ['consulta','ebook','pack'].reduce((acc,t)=>{ acc[t]=ingresos.filter(i=>i.tipo===t&&(i.fecha||'').startsWith(mes)).reduce((s,i)=>s+Number(i.monto||0),0); return acc; },{});
+  // Neto total del período filtrado (bruto - comisiones)
+  const totalBruto = filtered.reduce((s,i)=>s+Number(i.monto||0),0);
+  const totalComision = filtered.reduce((s,i)=>s+Number(i.montoComision||0),0);
+  const totalNeto = totalBruto - totalComision;
+
   const icons = {consulta:'🩺',ebook:'📖',pack:'📦'};
+
   return div({},
     !can('delIngreso') && div({className:'restricted-banner'}, '🔒 No podés eliminar ingresos ya registrados'),
-    div({className:'stats-grid',style:{gridTemplateColumns:'repeat(3,1fr)',marginBottom:20}},
-      ...['consulta','ebook','pack'].map(t=>div({key:t,className:'stat-card'}, span({className:'stat-icon'},icons[t]), div({className:'stat-value',style:{fontSize:'1.25rem'}},ars(tot[t])), div({className:'stat-label'},{consulta:'Consultas',ebook:'Ebooks',pack:'Packs'}[t])))
+
+    // Stats: bruto por tipo + neto total
+    div({className:'stats-grid',style:{gridTemplateColumns:'repeat(4,1fr)',marginBottom:20}},
+      ...['consulta','ebook','pack'].map(t=>div({key:t,className:'stat-card'},
+        span({className:'stat-icon'},icons[t]),
+        div({className:'stat-value',style:{fontSize:'1.25rem'}},ars(tot[t])),
+        div({className:'stat-label'},{consulta:'Consultas',ebook:'Ebooks',pack:'Packs'}[t])
+      )),
+      div({className:'stat-card fin-stat-neto'},
+        span({className:'stat-icon'},'💵'),
+        div({className:'stat-value',style:{fontSize:'1.25rem'}},ars(totalNeto)),
+        div({className:'stat-label'},'Ingreso neto')
+      )
     ),
+
     div({style:{display:'flex',gap:8,marginBottom:16,flexWrap:'wrap',alignItems:'center'}},
       ...['todos','consulta','ebook','pack'].map(f=>Btn({key:f,cls:filter===f?'btn-primary':'btn-secondary',sm:true,onClick:()=>setFilter(f)}, {todos:'Todos',consulta:'Consultas',ebook:'Ebooks',pack:'Packs'}[f])),
       e('input',{type:'month',value:mes,onChange:ev=>setMes(ev.target.value),style:{width:'auto'}}),
       div({style:{flex:1}}),
-      e('strong',{style:{color:'var(--green-mid)'}}, 'Total: '+ars(total)),
+      totalComision > 0 && span({style:{fontSize:'.82rem',color:'#c0392b',fontWeight:500}},
+        'Comisiones: -'+ars(totalComision)
+      ),
+      e('strong',{style:{color:'var(--green-mid)',marginLeft:8}}, 'Neto: '+ars(totalNeto)),
       Btn({cls:'btn-secondary',sm:true,onClick:()=>exportXLS(
-        filtered,
+        filtered.map(i=>({...i, montoNeto: i.montoNeto||i.monto, comisionPct: i.comisionPct||0, montoComision: i.montoComision||0})),
         [{key:'fecha',label:'Fecha'},{key:'descripcion',label:'Descripción'},{key:'tipo',label:'Tipo'},
-         {key:'metodoPago',label:'Método de Pago'},{key:'monto',label:'Monto (ARS)'}],
+         {key:'consultorioNombre',label:'Consultorio'},{key:'metodoPago',label:'Método de Pago'},
+         {key:'monto',label:'Monto Bruto (ARS)'},{key:'comisionPct',label:'Comisión %'},
+         {key:'montoComision',label:'Comisión (ARS)'},{key:'montoNeto',label:'Neto (ARS)'}],
         'finanzas_'+mes
       )}, '📥 Exportar Excel')
     ),
+
     Card({children:[div({className:'table-wrap'},
       e('table',{},
-        e('thead',{},tr_({}, ...['Descripción','Tipo','Fecha','Método','Monto',''].map(h=>th_({key:h},h)))),
-        e('tbody',{}, ...filtered.map(i=>tr_({key:i.id},
-          td_({},[div({style:{display:'flex',alignItems:'center',gap:10}}, div({className:`ingreso-icon ${i.tipo}`},icons[i.tipo]), span({style:{fontWeight:500}},i.descripcion))]),
-          td_({}, Badge({cls:i.tipo==='consulta'?'bg':i.tipo==='ebook'?'by':'bb'}, i.tipo)),
-          td_({style:{color:'var(--text-muted)',fontSize:'.82rem'}}, i.fecha),
-          td_({style:{fontSize:'.82rem'}}, i.metodoPago),
-          td_({}, e('strong',{style:{color:'var(--green-mid)'}}, ars(i.monto))),
-          td_({}, can('delIngreso') ? Btn({cls:'btn-danger',sm:true,onClick:()=>onDel(i.id)}, '✕') : span({style:{fontSize:'.8rem',color:'var(--text-muted)'}},'🔒'))
-        )),
-        filtered.length===0 && tr_({key:'e'}, td_({colSpan:6}, EmptyState({icon:'💰',text:'Sin ingresos'})))
+        e('thead',{},tr_({}, ...['Descripción','Tipo','Fecha','Consultorio','Método','Monto / Neto',''].map(h=>th_({key:h},h)))),
+        e('tbody',{}, ...filtered.map(i=>{
+          const tieneComision = i.montoComision > 0;
+          const neto = i.montoNeto || i.monto;
+          return tr_({key:i.id},
+            td_({},[div({style:{display:'flex',alignItems:'center',gap:10}}, div({className:`ingreso-icon ${i.tipo}`},icons[i.tipo]||'💰'), div({}, span({style:{fontWeight:500,display:'block'}},i.descripcion), i.origenTurno && span({style:{fontSize:'.68rem',color:'var(--text-muted)'}}, '📅 Auto-cobro desde turno')))]),
+            td_({}, Badge({cls:i.tipo==='consulta'?'bg':i.tipo==='ebook'?'by':'bb'}, i.tipo)),
+            td_({style:{color:'var(--text-muted)',fontSize:'.82rem'}}, i.fecha),
+            td_({style:{fontSize:'.78rem'}}, i.consultorioNombre || '-'),
+            td_({style:{fontSize:'.82rem'}}, i.metodoPago),
+            td_({},
+              tieneComision
+                ? div({},
+                    div({className:'monto-bruto'}, ars(i.monto)),
+                    div({className:'monto-neto'}, ars(neto)),
+                    span({className:'comision-badge'}, '-'+i.comisionPct+'% consultorio')
+                  )
+                : e('strong',{style:{color:'var(--green-mid)'}}, ars(neto))
+            ),
+            td_({}, can('delIngreso') ? Btn({cls:'btn-danger',sm:true,onClick:()=>onDel(i.id)}, '✕') : span({style:{fontSize:'.8rem',color:'var(--text-muted)'}},'🔒'))
+          );
+        }),
+        filtered.length===0 && tr_({key:'e'}, td_({colSpan:7}, EmptyState({icon:'💰',text:'Sin ingresos'})))
         )
       ))
     ]}),
@@ -1530,6 +1656,111 @@ function Usuarios({usuarios, user, showToast, db, auth}) {
         div({style:{marginTop:16,padding:14,background:'var(--green-mist)',borderRadius:'var(--radius-sm)',fontSize:'.8rem',color:'var(--text-mid)',lineHeight:1.6}},
           form.rol==='asistente' ? div({}, e('strong',{},'Asistente: '),'podrá ver pacientes, agendar turnos y registrar ingresos. No podrá eliminar pacientes ni ingresos ni ver finanzas.')
           : div({}, e('strong',{},'Administrador: '),'acceso total a todos los módulos y gestión de usuarios.')
+        )
+      )
+    })
+  );
+}
+
+
+// ─── CONSULTORIOS ─────────────────────────────────────────────────────────────
+function Consultorios({consultorios, onSave, onUpdate, onDel}) {
+  const EMPTY = {nombre:'', direccion:'', telefono:'', comision:0, notas:''};
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm]         = useState({...EMPTY});
+  const [editId, setEditId]     = useState(null);
+  const [saving, setSaving]     = useState(false);
+
+  const PALETA = ['#52b788','#e9c46a','#e76f51','#4a90d9','#9b59b6','#1abc9c','#e74c3c','#3498db'];
+  const colorIdx = i => PALETA[i % PALETA.length];
+
+  const abrirNuevo = () => { setForm({...EMPTY}); setEditId(null); setShowForm(true); };
+  const abrirEditar = (ct) => { setForm({nombre:ct.nombre,direccion:ct.direccion||'',telefono:ct.telefono||'',comision:ct.comision||0,notas:ct.notas||''}); setEditId(ct.id); setShowForm(true); };
+  const cerrar = () => { setShowForm(false); setEditId(null); setForm({...EMPTY}); };
+
+  const guardar = async () => {
+    if (!form.nombre.trim()) { swalError('Nombre requerido','Ingresá un nombre para el consultorio'); return; }
+    const com = Number(form.comision)||0;
+    if (com < 0 || com > 100) { swalError('Comisión inválida','Debe ser un valor entre 0 y 100'); return; }
+    setSaving(true);
+    const data = {...form, comision: com};
+    if (editId) { await onUpdate(editId, data); }
+    else        { await onSave(data); }
+    setSaving(false);
+    cerrar();
+  };
+
+  const campo = (key, label, type='text', placeholder='') => div({className:'form-group'},
+    lbl({}, label),
+    inp({type, value:form[key]||'', placeholder, onChange:ev=>setForm({...form,[key]:ev.target.value})})
+  );
+
+  return div({},
+    // Header
+    div({style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}},
+      div({},
+        e('p',{style:{fontSize:'.875rem',color:'var(--text-muted)',marginTop:4}}, consultorios.length+' consultorio(s) registrado(s)')
+      ),
+      Btn({onClick:abrirNuevo}, '+ Nuevo consultorio')
+    ),
+
+    // Aviso si sin consultorios
+    consultorios.length === 0 && EmptyState({icon:'🏥', text:'Todavía no hay consultorios. Agregá uno para asignarlos a los turnos y calcular comisiones automáticamente.'}),
+
+    // Grilla de cards
+    div({className:'cons-grid'},
+      ...consultorios.map((ct, i) => div({key:ct.id, className:'cons-card', style:{borderLeftColor:colorIdx(i)}},
+        e('h3',{}, ct.nombre),
+        ct.direccion && div({className:'cons-dir'}, '📍 '+ct.direccion),
+        ct.telefono  && div({style:{fontSize:'.78rem',color:'var(--text-muted)',marginBottom:8}}, '📞 '+ct.telefono),
+        div({style:{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}},
+          div({className:'cons-comision'},
+            Number(ct.comision||0) > 0
+              ? '💸 Comisión: '+ct.comision+'%'
+              : '✅ Sin comisión'
+          ),
+          Number(ct.comision||0) > 0 && span({style:{fontSize:'.72rem',color:'var(--text-muted)'}},
+            '— Se descuenta automáticamente al cobrar'
+          )
+        ),
+        ct.notas && div({style:{fontSize:'.78rem',color:'var(--text-muted)',marginTop:8,fontStyle:'italic'}}, ct.notas),
+        div({className:'cons-actions'},
+          Btn({cls:'btn-secondary',sm:true,onClick:()=>abrirEditar(ct)}, '✏️ Editar'),
+          Btn({cls:'btn-danger',sm:true,onClick:()=>onDel(ct.id)}, '🗑 Eliminar')
+        )
+      ))
+    ),
+
+    // Modal form
+    showForm && Modal({
+      title: editId ? 'Editar consultorio' : 'Nuevo consultorio',
+      onClose: cerrar,
+      footer: div({},
+        Btn({cls:'btn-secondary',onClick:cerrar}, 'Cancelar'),
+        Btn({onClick:guardar, disabled:saving}, saving ? 'Guardando...' : (editId ? 'Guardar cambios' : 'Crear consultorio'))
+      ),
+      children: div({className:'form-grid'},
+        div({className:'form-group full'},
+          lbl({}, 'Nombre del consultorio'),
+          inp({value:form.nombre, placeholder:'ej: Consultorio Centro', onChange:ev=>setForm({...form,nombre:ev.target.value})})
+        ),
+        campo('direccion','Dirección','text','ej: Av. Corrientes 1234'),
+        campo('telefono','Teléfono','text','ej: 11-1234-5678'),
+        div({className:'form-group'},
+          lbl({}, 'Comisión del consultorio (%)'),
+          inp({type:'number', min:0, max:100, step:0.5, value:form.comision||0,
+            onChange:ev=>setForm({...form,comision:ev.target.value}),
+            placeholder:'0 = sin comisión'
+          }),
+          div({style:{fontSize:'.72rem',color:'var(--text-muted)',marginTop:4}},
+            Number(form.comision) > 0
+              ? '💡 Se descontará '+form.comision+'% del monto de cada consulta cobrada en este consultorio'
+              : '💡 Sin comisión — el monto cobrado es el ingreso neto completo'
+          )
+        ),
+        div({className:'form-group full'},
+          lbl({}, 'Notas'),
+          e('textarea',{rows:2, value:form.notas||'', placeholder:'Horarios, condiciones, etc.', onChange:ev=>setForm({...form,notas:ev.target.value}), style:{width:'100%',padding:'10px 12px',border:'1.5px solid #e2e8e0',borderRadius:'var(--radius-sm)',fontFamily:'DM Sans,sans-serif',fontSize:'.875rem',resize:'vertical',outline:'none'}})
         )
       )
     })
