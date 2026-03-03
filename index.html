@@ -632,6 +632,7 @@ function App() {
   onUpdEst:(id,estado)=>updateFB('turnos',id,{estado}).then(()=>showToast('Turno actualizado')),
   onUpdatePac:(id,data)=>updateFB('pacientes',id,data),
   onAddIngreso:(data)=>addFB('ingresos',data),
+  onDelIngreso:(id)=>deleteDoc(doc(db,'ingresos',id)),
   onDel:id=>swalConfirm('Eliminar turno','El turno sera eliminado permanentemente').then(r=>r.isConfirmed&&delFB('turnos',id).then(()=>showToast('Turno eliminado')))
 }),
         page==='finanzas'&&can('verFin') && e(Finanzas, {ingresos,consultorios,can,onDel:id=>swalConfirm('Eliminar ingreso','Esta accion no se puede deshacer').then(r=>r.isConfirmed&&delFB('ingresos',id).then(()=>showToast('Ingreso eliminado')))}),
@@ -1188,7 +1189,7 @@ function PacienteDetalle({pac, navigate, setSelPac, can, showToast, onUpdate}) {
 )};
 
 // ─── AGENDA ───────────────────────────────────────────────────────────────────
-function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate, onUpdEst, onUpdatePac, onAddIngreso, onDel}) {
+function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate, onUpdEst, onUpdatePac, onAddIngreso, onDelIngreso, onDel}) {
   const hoy = today();
   const [selFecha,  setSelFecha]  = useState(hoy);
   const [filtCons,  setFiltCons]  = useState('todos');
@@ -1235,13 +1236,35 @@ function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate,
     setEditTurno(null);
   };
 
-  // Registrar hito de asistencia en el paciente
+  // ── Helper: crea ingreso y devuelve su id ─────────────────────────────────
+  const crearIngreso = async (t) => {
+    const cons = consultorios.find(c => c.id === t.consultorioId);
+    const comisionPct   = cons?.comision ? Number(cons.comision) : 0;
+    const montoComision = comisionPct > 0 ? Math.round(t.monto * comisionPct / 100) : 0;
+    const montoNeto     = t.monto - montoComision;
+    const ref = await onAddIngreso({
+      descripcion:       t.pacienteNombre + ' — ' + t.tipo,
+      tipo:              'consulta',
+      fecha:             t.fecha,
+      monto:             t.monto,
+      montoNeto,
+      montoComision,
+      comisionPct,
+      consultorioId:     t.consultorioId || '',
+      consultorioNombre: nombreCons(t.consultorioId),
+      metodoPago:        'Efectivo',
+      turnoId:           t.id,
+      origenTurno:       true
+    });
+    return ref?.id || null;
+  };
+
+  // ── Registrar asistencia (primera vez) ────────────────────────────────────
   const registrarAsistencia = async (t, tipo) => {
     const pac = pacs.find(p => p.id === t.pacienteId);
     if (!pac) { showToast('Paciente no encontrado','error'); return; }
-    const iconos = {asistio:'✅ Asistió',noAsistio:'❌ No asistió',reprogramo:'🔄 Reprogramó'};
+    const iconos = {asistio:'✅ Asistió', noAsistio:'❌ No asistió', reprogramo:'🔄 Reprogramó'};
     const tipoLabel = iconos[tipo];
-    // Crear hito en la colección de consultas del paciente
     const hito = {
       fecha: t.fecha, hora: t.hora, tipo,
       nota: tipoLabel + ' — ' + t.tipo + (t.consultorioId ? ' — ' + nombreCons(t.consultorioId) : '') + (t.notas ? ' | ' + t.notas : ''),
@@ -1249,35 +1272,44 @@ function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate,
     };
     const consultas = [hito, ...(pac.consultas || [])];
     await onUpdatePac(pac.id, { consultas, ultimaConsulta: t.fecha });
-    // Actualizar estado del turno
     const nuevoEstado = tipo === 'asistio' ? 'Confirmado' : tipo === 'noAsistio' ? 'Cancelado' : t.estado;
-    await onUpdate(t.id, { asistencia: tipo, estado: nuevoEstado });
-    // Si asistió → cobro automático en Finanzas
-    if (tipo === 'asistio' && t.monto > 0) {
-      const cons = consultorios.find(c => c.id === t.consultorioId);
-      const comisionPct = cons?.comision ? Number(cons.comision) : 0;
-      const montoComision = comisionPct > 0 ? Math.round(t.monto * comisionPct / 100) : 0;
-      const montoNeto = t.monto - montoComision;
-      await onAddIngreso({
-        descripcion: t.pacienteNombre + ' — ' + t.tipo,
-        tipo: 'consulta',
-        fecha: t.fecha,
-        monto: t.monto,
-        montoNeto,
-        montoComision,
-        comisionPct,
-        consultorioId: t.consultorioId || '',
-        consultorioNombre: nombreCons(t.consultorioId),
-        metodoPago: 'Efectivo',
-        turnoId: t.id,
-        origenTurno: true
-      });
-    }
+    let ingresoId = null;
+    if (tipo === 'asistio' && t.monto > 0) ingresoId = await crearIngreso(t);
+    await onUpdate(t.id, { asistencia: tipo, estado: nuevoEstado, ingresoId: ingresoId || null });
     showToast(tipo === 'asistio' ? '✅ Asistencia registrada y cobro guardado en Finanzas' : tipoLabel + ' registrado');
+  };
+
+  // ── Cambiar asistencia ya registrada ──────────────────────────────────────
+  const cambiarAsistencia = async (t, nuevoTipo) => {
+    const pac = pacs.find(p => p.id === t.pacienteId);
+    const iconos = {asistio:'✅ Asistió', noAsistio:'❌ No asistió', reprogramo:'🔄 Reprogramó'};
+    const tipoLabel = iconos[nuevoTipo];
+    // 1. Eliminar ingreso previo si el estado anterior era 'asistio'
+    if (t.asistencia === 'asistio' && t.ingresoId) {
+      try { await onDelIngreso(t.ingresoId); } catch(e) { console.warn('No se pudo eliminar ingreso previo', e); }
+    }
+    // 2. Actualizar hito en historial del paciente
+    if (pac) {
+      const yaExiste = (pac.consultas || []).some(h => h.turnoId === t.id);
+      const consultas = yaExiste
+        ? (pac.consultas || []).map(h => h.turnoId === t.id
+            ? { ...h, tipo: nuevoTipo, nota: tipoLabel + ' — ' + t.tipo + (t.consultorioId ? ' — ' + nombreCons(t.consultorioId) : '') }
+            : h)
+        : [{ fecha:t.fecha, hora:t.hora, tipo:nuevoTipo, nota:tipoLabel+' — '+t.tipo, turnoId:t.id, peso:'' }, ...(pac.consultas||[])];
+      await onUpdatePac(pac.id, { consultas });
+    }
+    // 3. Crear nuevo ingreso si el nuevo tipo es 'asistio'
+    let nuevoIngresoId = null;
+    if (nuevoTipo === 'asistio' && t.monto > 0) nuevoIngresoId = await crearIngreso(t);
+    // 4. Actualizar turno
+    const nuevoEstado = nuevoTipo==='asistio' ? 'Confirmado' : nuevoTipo==='noAsistio' ? 'Cancelado' : t.estado;
+    await onUpdate(t.id, { asistencia: nuevoTipo, estado: nuevoEstado, ingresoId: nuevoIngresoId });
+    showToast('Asistencia actualizada: ' + tipoLabel);
   };
 
   // Sub-componente tarjeta de turno
   const TurnoCard = ({t}) => {
+    const [cambiando, setCambiando] = useState(false);
     const color = colorCons(t.consultorioId);
     const asistBadge = {
       asistio:    {cls:'asist-badge asistio',    txt:'✅ Asistió'},
@@ -1300,15 +1332,34 @@ function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate,
           background:color+'22',color:color,fontWeight:500
         }}, nombreCons(t.consultorioId)),
         t.notas && div({style:{fontSize:'.72rem',color:'var(--text-muted)',marginTop:2}}, 'Nota: '+t.notas),
-        // Badge si ya tiene asistencia registrada
-        asistBadge && span({className:asistBadge.cls}, asistBadge.txt)
+        // Badge asistencia + botón cambiar
+        asistBadge && div({style:{display:'flex',alignItems:'center',gap:6,marginTop:4,flexWrap:'wrap'}},
+          span({className:asistBadge.cls}, asistBadge.txt),
+          can('editTurno') && e('button',{
+            style:{fontSize:'.65rem',padding:'1px 7px',borderRadius:10,background:'#f0f0f0',border:'1px solid #ddd',cursor:'pointer',color:'var(--text-muted)',lineHeight:1.6},
+            onClick:()=>setCambiando(v=>!v)
+          }, cambiando ? '✕ cerrar' : '✏️ cambiar')
+        ),
+        // Opciones inline para cambiar asistencia
+        cambiando && can('editTurno') && div({style:{marginTop:6,display:'flex',gap:4,flexWrap:'wrap'}},
+          ...['asistio','noAsistio','reprogramo']
+            .filter(op => op !== t.asistencia)
+            .map(op => {
+              const labels = {asistio:'✅ Asistió', noAsistio:'❌ No asistió', reprogramo:'🔄 Reprogramó'};
+              const clss   = {asistio:'asist-asistio', noAsistio:'asist-no-asistio', reprogramo:'asist-reprogramo'};
+              return e('button',{
+                key:op, className:'asist-btn '+clss[op],
+                onClick:async ()=>{ setCambiando(false); await cambiarAsistencia(t, op); }
+              }, labels[op]);
+            })
+        )
       ),
       div({style:{display:'flex',flexDirection:'column',gap:6,alignItems:'flex-end'}},
         Badge({cls:t.estado==='Confirmado'?'bg':t.estado==='Pendiente'?'by':'br'}, t.estado),
-        // Botones asistencia — solo si no tiene ya una
+        // Botones primera asistencia — solo si todavía no tiene
         can('editTurno') && !t.asistencia && div({style:{display:'flex',gap:4,flexWrap:'wrap',justifyContent:'flex-end',marginBottom:2}},
-          e('button',{className:'asist-btn asist-asistio', onClick:()=>registrarAsistencia(t,'asistio')},    '✅ Asistió'),
-          e('button',{className:'asist-btn asist-no-asistio', onClick:()=>registrarAsistencia(t,'noAsistio')},'❌ No asistió'),
+          e('button',{className:'asist-btn asist-asistio',    onClick:()=>registrarAsistencia(t,'asistio')},    '✅ Asistió'),
+          e('button',{className:'asist-btn asist-no-asistio', onClick:()=>registrarAsistencia(t,'noAsistio')}, '❌ No asistió'),
           e('button',{className:'asist-btn asist-reprogramo', onClick:()=>registrarAsistencia(t,'reprogramo')},'🔄 Reprogramó')
         ),
         can('editTurno') && div({style:{display:'flex',gap:4,flexWrap:'wrap',justifyContent:'flex-end'}},
