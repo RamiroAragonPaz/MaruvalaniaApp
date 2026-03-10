@@ -288,6 +288,28 @@ textarea{resize:vertical;min-height:80px}
 .hc-save-bar{display:flex;justify-content:flex-end;gap:10px;margin-top:8px;padding-top:16px;border-top:1px solid var(--cream-dark)}
 
 
+/* ── Estado clínico del paciente ─────────────────────────────────────────── */
+.estado-clinico-selector{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+.estado-clinico-opt{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border-radius:var(--radius-sm);border:2px solid #e2e8e0;cursor:pointer;transition:all .18s;background:white}
+.estado-clinico-opt:hover{border-color:var(--green-light);background:var(--green-mist)}
+.estado-clinico-opt.selected{border-color:var(--green-mid);background:var(--green-mist)}
+.estado-clinico-opt input[type=radio]{margin-top:2px;accent-color:var(--green-mid)}
+.estado-clinico-opt .ec-label{font-weight:600;font-size:.85rem;color:var(--text-dark)}
+.estado-clinico-opt .ec-desc{font-size:.75rem;color:var(--text-muted);margin-top:2px;line-height:1.4}
+.ec-badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:.72rem;font-weight:600}
+.ec-badge.inicial{background:#dbeafe;color:#1d4ed8}
+.ec-badge.evaluacion{background:#fef3c7;color:#92400e}
+.ec-badge.seguimiento{background:#d1fae5;color:#065f46}
+/* ── Planes e Informes — Drive link ──────────────────────────────────────── */
+.drive-link-box{display:flex;align-items:center;gap:10px;padding:12px 14px;background:white;border:1.5px solid #e2e8e0;border-radius:var(--radius-sm);margin-bottom:14px}
+.drive-link-box a{color:var(--green-mid);font-weight:500;font-size:.875rem;text-decoration:none;display:flex;align-items:center;gap:6px}
+.drive-link-box a:hover{text-decoration:underline}
+.drive-link-edit{display:flex;gap:8px;margin-bottom:14px}
+.drive-link-edit input{flex:1}
+/* ── Finanzas por consultorio ────────────────────────────────────────────── */
+.cons-fin-table td,.cons-fin-table th{padding:10px 12px;border-bottom:1px solid var(--cream-dark);font-size:.82rem}
+.cons-fin-table th{background:var(--cream);font-weight:600;color:var(--text-mid)}
+.cons-fin-row-total{font-weight:700;background:var(--green-mist)}
 /* ── Módulo Consultorios ──────────────────────────────────────────────────── */
 .cons-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;margin-top:8px}
 .cons-card{background:white;border-radius:var(--radius);padding:20px;box-shadow:var(--shadow-sm);border:1px solid rgba(0,0,0,.04);border-left:4px solid var(--green-light)}
@@ -409,7 +431,9 @@ function EmptyState({icon, text}) {
 
 function Toast({msg, type, onClose}) {
   useEffect(() => { const t = setTimeout(onClose, 3000); return () => clearTimeout(t); }, []);
-  return div({className:'toast' + (type==='error' ? ' error' : '')}, type==='error' ? '✕' : '✓', ' ', msg);
+  return div({className:'toast' + (type==='error' ? ' error' : ''),
+    dangerouslySetInnerHTML:{__html:(type==='error'?'✕ ':'✓ ')+msg}
+  });
 }
 
 // ─── MODAL ────────────────────────────────────────────────────────────────────
@@ -520,6 +544,8 @@ function App() {
   const [ebooks, setEbooks]   = useState([]);
   const [usuarios,setUsuarios]= useState([]);
   const [consultorios,setConsultorios] = useState([]);
+  const [selPacTab,  setSelPacTab]  = useState('info');
+  const [agendaFecha, setAgendaFecha] = useState(null); // fecha seleccionada en Agenda
 
   const showToast = (msg, type='success') => setToast({msg,type});
   const can = p => user && PERMS[user.rol]?.[p];
@@ -557,6 +583,41 @@ function App() {
     return () => unsubs.forEach(u => u());
   }, [authSt, isAdmin]);
 
+  // Auto-carga de alquileres fijos al inicio del mes
+  useEffect(() => {
+    if (authSt !== 'in' || !isAdmin) return;
+    const registrarAlquileres = async () => {
+      const mes = mesNow(); // 'YYYY-MM'
+      for (const ct of consultorios) {
+        if (ct.tipoGasto !== 'alquiler' || !Number(ct.alquilerFijo)) continue;
+        const flagId = 'alq_' + ct.id + '_' + mes.replace('-','');
+        try {
+          const flagRef = doc(db, 'alquileres', flagId);
+          const flagSnap = await getDoc(flagRef);
+          if (flagSnap.exists()) continue; // ya registrado este mes
+          // Crear ingreso-egreso de alquiler
+          await addDoc(collection(db,'ingresos'), {
+            descripcion: 'Alquiler — ' + ct.nombre,
+            tipo: 'alquiler',
+            fecha: mes + '-01',
+            monto: -Number(ct.alquilerFijo),
+            montoNeto: -Number(ct.alquilerFijo),
+            montoComision: 0,
+            comisionPct: 0,
+            consultorioId: ct.id,
+            consultorioNombre: ct.nombre,
+            metodoPago: 'Transferencia',
+            origenAlquiler: true,
+            creadoEn: serverTimestamp()
+          });
+          // Marcar como registrado
+          await setDoc(flagRef, {consultorioId:ct.id, mes, registrado:true, creadoEn:serverTimestamp()});
+        } catch(e) { console.warn('Auto-alquiler error:', e); }
+      }
+    };
+    if (consultorios.length > 0) registrarAlquileres();
+  }, [authSt, isAdmin, consultorios.length]);
+
   if (authSt === 'loading') return LoadingScreen();
   if (authSt === 'out') return e(React.Fragment, {}, e(Login), toast && e(Toast, {key:'t', msg:toast.msg, type:toast.type, onClose:()=>setToast(null)}) );
 
@@ -565,7 +626,9 @@ function App() {
   const updateFB = (col, id, data) => updateDoc(doc(db,col,id), data);
   const delFB    = (col, id) => deleteDoc(doc(db,col,id));
 
-  const navigate = p => { setPage(p); setSidebar(false); if(p !== 'paciente-detalle') setSelPac(null); };
+  const navigate   = p => { setPage(p); setSidebar(false); if(p!=='paciente-detalle'){setSelPac(null);setSelPacTab('info');} };
+  // Navegar a HC de un paciente directamente (desde Agenda u otro módulo)
+  const abrirPacHC = pac => { setSelPac(pac); setSelPacTab('hc'); setPage('paciente-detalle'); setSidebar(false); };
 
   const navItems = [
     {id:'dashboard',icon:'🏠',label:'Inicio'},
@@ -626,8 +689,8 @@ function App() {
       div({className:'page-content'},
         page==='dashboard' && e(Dashboard, {pacs,turnos,ingresos,navigate,setSelPac,can}),
         page==='pacientes' && e(Pacientes, {pacs,navigate,setSelPac,can,onDel:id=>swalConfirm('Eliminar paciente','Esta accion no se puede deshacer').then(r=>r.isConfirmed&&delFB('pacientes',id).then(()=>showToast('Paciente eliminado')))}),
-        page==='paciente-detalle'&&selPac && e(PacienteDetalle, {pac:selPac,navigate,setSelPac,can,showToast,onUpdate:(id,data)=>updateFB('pacientes',id,data)}),
-        page==='agenda' && e(Agenda, {turnos,pacs,can,showToast,navigate,consultorios,
+        page==='paciente-detalle'&&selPac && e(PacienteDetalle, {pac:selPac,navigate,setSelPac,can,showToast,initialTab:selPacTab,onUpdate:(id,data)=>updateFB('pacientes',id,data)}),
+        page==='agenda' && e(Agenda, {turnos,pacs,can,showToast,navigate,consultorios,abrirPacHC,onFechaChange:setAgendaFecha,
   onUpdate:(id,data)=>updateFB('turnos',id,data).then(()=>showToast('Turno actualizado')),
   onUpdEst:(id,estado)=>updateFB('turnos',id,{estado}).then(()=>showToast('Turno actualizado')),
   onUpdatePac:(id,data)=>updateFB('pacientes',id,data),
@@ -644,9 +707,15 @@ function App() {
         }),
         page==='usuarios'&&isAdmin && e(Usuarios, {usuarios,user,showToast,db,auth}),
         page==='add-paciente'&&can('editPac') && e(FormPaciente, {onCancel:()=>navigate('pacientes'),onSave:p=>addFB('pacientes',p).then(()=>{showToast('Paciente agregado');navigate('pacientes');})}),
-        page==='add-turno'&&can('editTurno') && e(FormTurno, {pacs,consultorios,onCancel:()=>navigate('agenda'),
+        page==='add-turno'&&can('editTurno') && e(FormTurno, {pacs,consultorios,turnos,initialFecha:agendaFecha,onCancel:()=>navigate('agenda'),
   onAddPac: async p => { const ref = await addFB('pacientes',p); return {id:ref.id,...p}; },
-  onSave:t=>addFB('turnos',t).then(()=>{showToast('Turno agendado');navigate('agenda');})
+  onSave:async t=>{
+    const ref  = await addFB('turnos', t);
+    const cons = consultorios.find(c=>c.id===t.consultorioId);
+    const url  = gcalUrl({...t, id:ref.id, consultorioNombre:cons?cons.nombre:''});
+    showToast('✅ Turno agendado — <a href="'+url+'" target="_blank" style="color:#fff;font-weight:700;text-decoration:underline">📅 Agregar a Google Calendar</a>');
+    navigate('agenda');
+  }
 }),
         page==='add-ingreso'&&can('regIngreso') && e(FormIngreso, {onCancel:()=>navigate('finanzas'),onSave:i=>addFB('ingresos',i).then(()=>{showToast('Ingreso registrado');navigate('finanzas');})}),
         page==='add-ebook'&&can('editEbook') && e(FormEbook, {onCancel:()=>navigate('ebooks'),onSave:eb=>addFB('ebooks',{...eb,ventas:0}).then(()=>{showToast('Ebook creado');navigate('ebooks');})}),
@@ -773,7 +842,9 @@ function Dashboard({pacs, turnos, ingresos, navigate, setSelPac, can}) {
 
   const thoy    = turnos.filter(t=>t.fecha===hoy).sort((a,b)=>a.hora.localeCompare(b.hora));
   const tSelDay = turnos.filter(t=>t.fecha===selFecha).sort((a,b)=>a.hora.localeCompare(b.hora));
-  const ingMes  = ingresos.filter(i=>(i.fecha||'').startsWith(mes)).reduce((s,i)=>s+Number(i.monto||0),0);
+  const ingMesBruto = ingresos.filter(i=>(i.fecha||'').startsWith(mes)).reduce((s,i)=>s+Number(i.monto||0),0);
+  const ingMesComision = ingresos.filter(i=>(i.fecha||'').startsWith(mes)).reduce((s,i)=>s+Number(i.montoComision||0),0);
+  const ingMes = ingMesBruto - ingMesComision;
   const recent  = [...pacs].filter(p=>p.ultimaConsulta).sort((a,b)=>b.ultimaConsulta.localeCompare(a.ultimaConsulta)).slice(0,5);
 
   const statCard = (cls,icon,val,lbl_) => div({className:'stat-card '+cls,key:lbl_},
@@ -788,22 +859,19 @@ function Dashboard({pacs, turnos, ingresos, navigate, setSelPac, can}) {
   };
 
   return div({},
-    div({className:'stats-grid'},
-      statCard('','👥', pacs.filter(p=>p.estado==='Activo').length, 'Pacientes activos'),
+    div({className:'stats-grid', style:{gridTemplateColumns:'repeat(3,1fr)'}},
       statCard('a2','📅', thoy.length, 'Turnos hoy'),
       can('verFin')
-        ? statCard('a3','💰', ars(ingMes), 'Ingresos del mes')
+        ? statCard('a3','💵', ars(ingMes), 'Ingresos netos del mes')
         : statCard('a3','🗓️', turnos.filter(t=>(t.fecha||'').startsWith(mes)).length, 'Turnos este mes'),
       statCard('a4','🌿', pacs.length, 'Total pacientes')
     ),
 
-    // Fila principal: calendario + turnos del dia + ultimas consultas
-    div({className:'dash-main-grid',style:{display:'grid',gridTemplateColumns:'280px 1fr 1fr',gap:20,marginBottom:0}},
+    // Fila principal: calendario + turnos del dia seleccionado
+    div({className:'dash-main-grid',style:{display:'grid',gridTemplateColumns:'300px 1fr',gap:20,marginBottom:0}},
 
-      // MINI CALENDARIO
       e(MiniCalendar, {turnos, selectedDate:selFecha, onSelectDate:setSelFecha}),
 
-      // TURNOS DEL DIA SELECCIONADO
       Card({children:[
         div({className:'card-header'},
           span({className:'card-title'}, 'Turnos — '+dateLabel(selFecha)),
@@ -822,26 +890,6 @@ function Dashboard({pacs, turnos, ingresos, navigate, setSelPac, can}) {
                   Badge({cls:t.estado==='Confirmado'?'bg':t.estado==='Pendiente'?'by':'br'}, t.estado)
                 )
               ))
-        )
-      ]}),
-
-      // ULTIMAS CONSULTAS
-      Card({children:[
-        div({className:'card-header'}, span({className:'card-title'}, 'Últimas consultas')),
-        div({className:'card-body',style:{padding:'12px 16px'}},
-          recent.length===0
-            ? div({style:{padding:'16px 0',textAlign:'center',color:'var(--text-muted)',fontSize:'.82rem'}}, 'Sin datos aún')
-            : recent.map(p =>
-                div({key:p.id,style:{display:'flex',alignItems:'center',gap:10,padding:'10px 0',borderBottom:'1px solid var(--cream-dark)',cursor:'pointer'},
-                  onClick:()=>{setSelPac(p);navigate('paciente-detalle');}},
-                  div({className:'av av-sm'}, ini(p.nombre,p.apellido)),
-                  div({style:{flex:1}},
-                    div({style:{fontSize:'.82rem',fontWeight:500}}, p.nombre+' '+p.apellido),
-                    div({style:{fontSize:'.72rem',color:'var(--text-muted)'}}, p.ultimaConsulta||'-')
-                  ),
-                  Badge({cls:p.estado==='Activo'?'bg':'bgr'}, p.estado)
-                )
-              )
         )
       ]})
     )
@@ -903,17 +951,18 @@ function Pacientes({pacs, navigate, setSelPac, can, onDel}) {
 }
 
 // ─── PACIENTE DETALLE ─────────────────────────────────────────────────────────
-function PacienteDetalle({pac, navigate, setSelPac, can, showToast, onUpdate}) {
-  const [tab,    setTab]    = useState('info');
+function PacienteDetalle({pac, navigate, setSelPac, can, showToast, onUpdate, initialTab='info'}) {
+  const [tab,    setTab]    = useState(initialTab||'info');
   const [edit,   setEdit]   = useState(false);
   const [form,   setForm]   = useState({...pac});
   const [showC,  setShowC]  = useState(false);
   const [showP,  setShowP]  = useState(false);
   const [nc,     setNc]     = useState({fecha:today(),nota:'',peso:''});
-  const [np,     setNp]     = useState({nombre:'',tipo:'',fecha:today()});
+  const [np,     setNp]     = useState({nombre:'',tipo:'',fecha:today(),driveUrl:''});
   const [saving, setSaving] = useState(false);
   // Historia Clínica — estado local que se guarda en pac.hc
   const HC_INIT = {
+    estadoClinico:'',
     comidas:'', actFisica:'', faf:'', alimentosRechaza:'',
     fumar:false, fumarDetalle:'', alcohol:false, alcoholDetalle:'', sal:false, salDetalle:'',
     sintomasPatologias:'', medicacion:'',
@@ -922,6 +971,8 @@ function PacienteDetalle({pac, navigate, setSelPac, can, showToast, onUpdate}) {
   const [hc,     setHc]     = useState({...HC_INIT, ...(pac.hc||{})});
   const [hcEdit, setHcEdit] = useState(false);
   const [hcSaving,setHcSaving] = useState(false);
+
+
 
   const imcVal   = imc(pac.peso, pac.talla);
   const imcColor = imcVal==='-' ? 'var(--text-muted)' : imcVal<25 ? 'var(--green-mid)' : imcVal<30 ? '#d97706' : '#dc2626';
@@ -934,6 +985,20 @@ function PacienteDetalle({pac, navigate, setSelPac, can, showToast, onUpdate}) {
     {val:'1.725', lbl:'1.725 — Intensa',             desc:'6–7 días/semana'},
     {val:'1.9',   lbl:'1.9 — Muy intensa',           desc:'Dos veces al día o trabajo físico'},
   ];
+
+  // ── VCT Harris-Benedict ──────────────────────────────────────────────────
+  const calcVCT = () => {
+    const peso  = Number(pac.peso  || form.peso  || 0);
+    const talla = Number(pac.talla || form.talla || 0);
+    const edad  = Number(pac.edad  || form.edad  || 0);
+    const sexo  = (pac.sexo || form.sexo || 'F').toUpperCase();
+    const faf   = Number(hc.faf || 0);
+    if (!peso || !talla || !edad || !faf) return null;
+    const tmb = sexo === 'M'
+      ? 66.5   + (13.75 * peso) + (5.003 * talla) - (6.775 * edad)   // Hombre
+      : 655.1  + (9.563 * peso) + (1.850 * talla) - (4.676 * edad);  // Mujer
+    return { tmb: Math.round(tmb), vct: Math.round(tmb * faf) };
+  };
 
   const saveInfo = async () => {
     setSaving(true);
@@ -949,7 +1014,7 @@ function PacienteDetalle({pac, navigate, setSelPac, can, showToast, onUpdate}) {
   const savePlan = async () => {
     if(!np.nombre) return;
     const planes = [{...np},...(pac.planes||[])];
-    await onUpdate(pac.id, {planes}); setSelPac({...pac,planes}); setShowP(false); setNp({nombre:'',tipo:'',fecha:today()}); showToast('Plan agregado');
+    await onUpdate(pac.id, {planes}); setSelPac({...pac,planes}); setShowP(false); setNp({nombre:'',tipo:'',fecha:today(),driveUrl:''}); showToast('Plan agregado');
   };
   const saveNotas = async () => {
     await onUpdate(pac.id, {notas:form.notas}); setSelPac({...pac,notas:form.notas}); setEdit(false); showToast('Notas guardadas');
@@ -998,8 +1063,7 @@ function PacienteDetalle({pac, navigate, setSelPac, can, showToast, onUpdate}) {
     div({style:{display:'flex',alignItems:'center',gap:10,marginBottom:16,flexWrap:'wrap'}},
       Btn({cls:'btn-secondary',sm:true,onClick:()=>navigate('pacientes')}, '← Volver'),
       can('editPac') && tab==='info'  && Btn({sm:true,onClick:()=>setEdit(!edit)}, edit?'Cancelar':'✏️ Editar'),
-      can('editPac') && tab==='hc'    && Btn({sm:true,onClick:()=>{ if(hcEdit){saveHC();}else setHcEdit(true); }, disabled:hcSaving}, hcEdit ? (hcSaving?'Guardando...':'💾 Guardar HC') : '✏️ Editar HC'),
-      can('editPac') && tab==='hc' && hcEdit && Btn({cls:'btn-secondary',sm:true,onClick:()=>{ setHc({...HC_INIT,...(pac.hc||{})}); setHcEdit(false); }}, 'Cancelar'),
+
       edit&&can('editPac')&&tab==='info' && Btn({sm:true,onClick:saveInfo,disabled:saving}, saving?'Guardando...':'💾 Guardar'),
       !can('editPac') && div({className:'restricted-banner',style:{margin:0}}, '🔒 Solo lectura')
     ),
@@ -1025,7 +1089,7 @@ function PacienteDetalle({pac, navigate, setSelPac, can, showToast, onUpdate}) {
     ),
 
     div({className:'tabs'},
-      ...[['info','Información'],['hc','Historia Clínica'],['consultas','Consultas'],['planes','Planes'],['notas','Notas']].map(([k,v]) =>
+      ...[['info','Información'],['hc','Historia Clínica'],['consultas','Consultas'],['planes','Planes e Informes'],['notas','Notas']].map(([k,v]) =>
         e('button',{key:k,className:'tab-btn'+(tab===k?' active':''),onClick:()=>setTab(k)}, v)
       )
     ),
@@ -1041,7 +1105,38 @@ function PacienteDetalle({pac, navigate, setSelPac, can, showToast, onUpdate}) {
     tab==='hc' && div({},
       !hcEdit && !pac.hc && div({style:{marginBottom:12,padding:'10px 14px',background:'var(--green-mist)',borderRadius:'var(--radius-sm)',fontSize:'.82rem',color:'var(--text-mid)'}},'📋 Todavía no se cargó la historia clínica. Hacé clic en "Editar HC" para completarla.'),
 
-      // A — Comidas y horarios
+      // Botón Editar / Cancelar al inicio de la HC
+      can('editPac') && div({style:{display:'flex',gap:8,marginBottom:14}},
+        !hcEdit && Btn({sm:true,onClick:()=>setHcEdit(true)}, '✏️ Editar HC'),
+        hcEdit && Btn({cls:'btn-secondary',sm:true,onClick:()=>{ setHc({...HC_INIT,...(pac.hc||{})}); setHcEdit(false); }}, 'Cancelar')
+      ),
+
+      // Estado clínico del paciente
+      HCSec({icono:'📊', titulo:'Estado clínico actual', children:[
+        hc.estadoClinico && !hcEdit && div({style:{marginBottom:10}},
+          span({className:'ec-badge '+hc.estadoClinico},
+            {inicial:'🟦 Estado inicial', evaluacion:'🟨 Estado de evaluación', seguimiento:'🟩 Estado de seguimiento'}[hc.estadoClinico] || hc.estadoClinico
+          )
+        ),
+        div({className:'estado-clinico-selector'},
+          ...[
+            {val:'inicial',     icono:'🟦', lbl:'Estado inicial',       desc:'Ya tuvo su primera consulta y se le envió el plan alimentario'},
+            {val:'evaluacion',  icono:'🟨', lbl:'Estado de evaluación',  desc:'Se entrega el registro alimentario para que el paciente complete'},
+            {val:'seguimiento', icono:'🟩', lbl:'Estado de seguimiento', desc:'Se entregan recetarios y organizador saludable — queda en seguimiento'},
+          ].map(op => div({
+            key:op.val,
+            className:'estado-clinico-opt'+(hc.estadoClinico===op.val?' selected':''),
+            style:{cursor:hcEdit?'pointer':'default',opacity:!hcEdit&&hc.estadoClinico&&hc.estadoClinico!==op.val?0.4:1},
+            onClick:()=>{ if(hcEdit) setHc({...hc,estadoClinico:op.val}); }
+          },
+            e('input',{type:'radio', name:'estadoClinico', checked:hc.estadoClinico===op.val, readOnly:true, style:{pointerEvents:'none'}}),
+            div({},
+              div({className:'ec-label'}, op.icono+' '+op.lbl),
+              div({className:'ec-desc'}, op.desc)
+            )
+          ))
+        )
+      ]}),
       HCSec({icono:'🍽️', titulo:'A — Alimentación habitual', children:[
         hcTA('comidas', 'Comidas y horarios que realiza normalmente', 4)
       ]}),
@@ -1068,7 +1163,38 @@ function PacienteDetalle({pac, navigate, setSelPac, can, showToast, onUpdate}) {
           hc.faf && div({style:{marginTop:8,fontSize:'.78rem',color:'var(--green-mid)',fontWeight:600}},
             'FAF seleccionado: '+hc.faf+' — '+((FAF_OPCIONES.find(o=>o.val===hc.faf)||{}).lbl||'')
           )
-        )
+        ),
+        // VCT calculado automáticamente
+        (() => {
+          const res = calcVCT();
+          if (!res) return div({style:{marginTop:10,padding:'10px 14px',background:'var(--cream)',borderRadius:'var(--radius-sm)',fontSize:'.8rem',color:'var(--text-muted)'}},
+            '💡 Para calcular el VCT completá: peso, talla, edad y sexo en la ficha del paciente + seleccioná el FAF arriba.'
+          );
+          return div({style:{marginTop:12,padding:'14px 16px',background:'var(--green-mist)',borderRadius:'var(--radius-sm)',border:'1.5px solid var(--green-light)'}},
+            div({style:{fontSize:'.72rem',fontWeight:700,color:'var(--text-mid)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:8}},
+              '🔥 Cálculo VCT — Harris-Benedict'
+            ),
+            div({style:{display:'flex',gap:20,flexWrap:'wrap',alignItems:'baseline'}},
+              div({},
+                div({style:{fontSize:'.75rem',color:'var(--text-muted)'}},'Tasa Metabólica Basal (TMB)'),
+                div({style:{fontSize:'1.3rem',fontWeight:700,color:'var(--text-dark)'}}, res.tmb+' kcal/día')
+              ),
+              div({style:{fontSize:'1.5rem',color:'var(--green-light)'}},'×'),
+              div({},
+                div({style:{fontSize:'.75rem',color:'var(--text-muted)'}},'Factor de actividad (FAF)'),
+                div({style:{fontSize:'1.3rem',fontWeight:700,color:'var(--text-dark)'}}, hc.faf)
+              ),
+              div({style:{fontSize:'1.5rem',color:'var(--green-light)'}}, '='),
+              div({style:{background:'white',borderRadius:'var(--radius-sm)',padding:'8px 16px',border:'2px solid var(--green-mid)'}},
+                div({style:{fontSize:'.75rem',color:'var(--text-muted)'}},'VCT estimado'),
+                div({style:{fontSize:'1.5rem',fontWeight:800,color:'var(--green-mid)'}}, res.vct+' kcal/día')
+              )
+            ),
+            div({style:{fontSize:'.68rem',color:'var(--text-muted)',marginTop:8}},
+              'Fórmula: Harris-Benedict ('+((pac.sexo||'F').toUpperCase()==='M'?'Hombre':'Mujer')+') · Peso: '+(pac.peso||'-')+' kg · Talla: '+(pac.talla||'-')+' cm · Edad: '+(pac.edad||'-')+' años'
+            )
+          );
+        })()
       ]}),
 
       // C — Alimentos que rechaza
@@ -1118,6 +1244,12 @@ function PacienteDetalle({pac, navigate, setSelPac, can, showToast, onUpdate}) {
           )
         )
       ]})
+,
+      // Botón Guardar al final de la HC
+      hcEdit && can('editPac') && div({style:{display:'flex',gap:8,justifyContent:'flex-end',marginTop:20,paddingTop:16,borderTop:'2px solid var(--cream-dark)'}},
+        Btn({cls:'btn-secondary',sm:true,onClick:()=>{ setHc({...HC_INIT,...(pac.hc||{})}); setHcEdit(false); }}, 'Cancelar'),
+        Btn({sm:true,onClick:saveHC,disabled:hcSaving}, hcSaving?'Guardando...':'💾 Guardar Historia Clínica')
+      )
     ),
 
     // ── TAB: Consultas ───────────────────────────────────────────────────────
@@ -1161,19 +1293,54 @@ function PacienteDetalle({pac, navigate, setSelPac, can, showToast, onUpdate}) {
       })
     ),
 
-    // ── TAB: Planes ──────────────────────────────────────────────────────────
+    // ── TAB: Planes e Informes ───────────────────────────────────────────────
     tab==='planes' && div({},
-      div({style:{display:'flex',justifyContent:'space-between',marginBottom:16}},
-        span({style:{fontSize:'.875rem',color:'var(--text-muted)'}},(pac.planes||[]).length+' plan(es)'),
-        can('editPac') && Btn({sm:true,onClick:()=>setShowP(true)}, '+ Agregar plan')
+      // Drive link de carpeta del paciente
+      div({style:{marginBottom:16}},
+        e('h4',{style:{fontSize:'.85rem',fontWeight:600,color:'var(--text-mid)',marginBottom:8}}, '📁 Carpeta Drive del paciente'),
+        pac.driveUrl
+          ? div({className:'drive-link-box'},
+              span({style:{fontSize:'1.1rem'}},'📂'),
+              e('a',{href:pac.driveUrl,target:'_blank',rel:'noopener'}, '🔗 Abrir carpeta en Google Drive'),
+              can('editPac') && Btn({cls:'btn-secondary',sm:true,onClick:()=>{
+                const url = prompt('URL de la carpeta Drive:', pac.driveUrl||'');
+                if(url!==null) { onUpdate(pac.id,{driveUrl:url}); setSelPac({...pac,driveUrl:url}); showToast('Link actualizado'); }
+              }}, '✏️')
+            )
+          : can('editPac')
+            ? div({className:'drive-link-edit'},
+                inp({placeholder:'Pegá el link de la carpeta Drive del paciente...',
+                  id:'drive-url-inp',
+                  onKeyDown:ev=>{ if(ev.key==='Enter'){ const v=ev.target.value.trim(); if(v){ onUpdate(pac.id,{driveUrl:v}); setSelPac({...pac,driveUrl:v}); showToast('Link guardado'); }}}
+                }),
+                Btn({sm:true,onClick:()=>{
+                  const v=document.getElementById('drive-url-inp')?.value?.trim();
+                  if(v){ onUpdate(pac.id,{driveUrl:v}); setSelPac({...pac,driveUrl:v}); showToast('Link guardado'); }
+                }}, 'Guardar link')
+              )
+            : div({style:{fontSize:'.82rem',color:'var(--text-muted)',padding:'10px 0'}}, 'Sin carpeta Drive cargada.')
       ),
-      (pac.planes||[]).length===0 ? EmptyState({icon:'📄',text:'Sin planes'}) :
-      div({}, ...(pac.planes||[]).map((pl,i)=>div({key:i,className:'plan-card'}, e('h4',{}, '📋 '+pl.nombre), e('p',{}, pl.tipo+' — '+pl.fecha)))),
-      showP && Modal({title:'Agregar plan',onClose:()=>setShowP(false),footer:div({},Btn({cls:'btn-secondary',onClick:()=>setShowP(false)},'Cancelar'),Btn({onClick:savePlan},'Guardar')),children:
+      // Lista de planes
+      div({style:{display:'flex',justifyContent:'space-between',marginBottom:12}},
+        span({style:{fontSize:'.875rem',color:'var(--text-muted)'}},(pac.planes||[]).length+' plan(es) / informe(s)'),
+        can('editPac') && Btn({sm:true,onClick:()=>setShowP(true)}, '+ Agregar plan / informe')
+      ),
+      (pac.planes||[]).length===0 ? EmptyState({icon:'📄',text:'Sin planes ni informes cargados'}) :
+      div({}, ...(pac.planes||[]).map((pl,i)=>div({key:i,className:'plan-card'},
+        div({style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}},
+          div({},
+            e('h4',{}, '📋 '+pl.nombre),
+            e('p',{}, pl.tipo+' — '+pl.fecha),
+            pl.driveUrl && e('a',{href:pl.driveUrl,target:'_blank',rel:'noopener',style:{fontSize:'.75rem',color:'var(--green-mid)',display:'inline-flex',alignItems:'center',gap:4,marginTop:4}}, '📂 Ver en Drive')
+          )
+        )
+      ))),
+      showP && Modal({title:'Agregar plan / informe',onClose:()=>setShowP(false),footer:div({},Btn({cls:'btn-secondary',onClick:()=>setShowP(false)},'Cancelar'),Btn({onClick:savePlan},'Guardar')),children:
         div({className:'form-grid'},
-          div({className:'form-group full'},lbl({},'Nombre del plan'),inp({value:np.nombre,onChange:ev=>setNp({...np,nombre:ev.target.value})})),
+          div({className:'form-group full'},lbl({},'Nombre del plan / informe'),inp({value:np.nombre,onChange:ev=>setNp({...np,nombre:ev.target.value})})),
           div({className:'form-group'},lbl({},'Tipo'),inp({value:np.tipo,onChange:ev=>setNp({...np,tipo:ev.target.value})})),
-          div({className:'form-group'},lbl({},'Fecha'),inp({type:'date',value:np.fecha,onChange:ev=>setNp({...np,fecha:ev.target.value})}))
+          div({className:'form-group'},lbl({},'Fecha'),inp({type:'date',value:np.fecha,onChange:ev=>setNp({...np,fecha:ev.target.value})})),
+          div({className:'form-group full'},lbl({},'Link Drive (opcional)'),inp({value:np.driveUrl||'',placeholder:'https://drive.google.com/...',onChange:ev=>setNp({...np,driveUrl:ev.target.value})}))
         )
       }
     ),
@@ -1188,10 +1355,34 @@ function PacienteDetalle({pac, navigate, setSelPac, can, showToast, onUpdate}) {
   )
 )};
 
+
+// ─── GOOGLE CALENDAR HELPER ───────────────────────────────────────────────────
+function gcalUrl(turno) {
+  const fecha = turno.fecha || '';
+  const hora  = turno.hora  || '09:00';
+  const [h, m] = hora.split(':').map(Number);
+  const end_h  = h + 1 > 23 ? 23 : h + 1;
+  const pad    = n => String(n).padStart(2,'0');
+  const start  = fecha.replace(/-/g,'') + 'T' + pad(h) + pad(m) + '00';
+  const end    = fecha.replace(/-/g,'') + 'T' + pad(end_h) + pad(m) + '00';
+  const titulo = encodeURIComponent((turno.pacienteNombre||'Consulta') + ' — ' + (turno.tipo||'Consulta'));
+  const detalle= encodeURIComponent([
+    turno.consultorioNombre ? 'Consultorio: '+turno.consultorioNombre : '',
+    turno.notas             ? 'Notas: '+turno.notas                  : '',
+  ].filter(Boolean).join('\n'));
+  const lugar  = encodeURIComponent(turno.consultorioNombre||'');
+  return 'https://calendar.google.com/calendar/render?action=TEMPLATE'
+    + '&text='    + titulo
+    + '&dates='   + start + '/' + end
+    + '&details=' + detalle
+    + '&location='+ lugar;
+}
+
 // ─── AGENDA ───────────────────────────────────────────────────────────────────
-function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate, onUpdEst, onUpdatePac, onAddIngreso, onDelIngreso, onDel}) {
+function Agenda({turnos, pacs, can, showToast, navigate, consultorios, abrirPacHC, onFechaChange, onUpdate, onUpdEst, onUpdatePac, onAddIngreso, onDelIngreso, onDel}) {
   const hoy = today();
-  const [selFecha,  setSelFecha]  = useState(hoy);
+  const [selFecha,  _setSelFecha] = useState(hoy);
+  const setSelFecha = d => { _setSelFecha(d); onFechaChange && onFechaChange(d); };
   const [filtCons,  setFiltCons]  = useState('todos');
   const [agrupar,   setAgrupar]   = useState(false);
   const [editTurno, setEditTurno] = useState(null); // turno en edicion
@@ -1236,8 +1427,27 @@ function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate,
     setEditTurno(null);
   };
 
+  // ── Pedir medio de pago via SweetAlert ───────────────────────────────────
+  const pedirMedioPago = () => Swal.fire({
+    title: '💳 Medio de pago',
+    input: 'select',
+    inputOptions: {
+      'Efectivo':        'Efectivo',
+      'BBVA':            'BBVA',
+      'Banco Provincia': 'Banco Provincia',
+      'Mercado Pago':    'Mercado Pago',
+      'Otros':           'Otros'
+    },
+    inputValue: 'Efectivo',
+    showCancelButton: true,
+    confirmButtonText: 'Confirmar cobro',
+    cancelButtonText: 'Cancelar',
+    confirmButtonColor: 'var(--green-mid)',
+    inputPlaceholder: 'Seleccioná el medio de pago'
+  });
+
   // ── Helper: crea ingreso y devuelve su id ─────────────────────────────────
-  const crearIngreso = async (t) => {
+  const crearIngreso = async (t, metodoPago='Efectivo') => {
     const cons = consultorios.find(c => c.id === t.consultorioId);
     const comisionPct   = cons?.comision ? Number(cons.comision) : 0;
     const montoComision = comisionPct > 0 ? Math.round(t.monto * comisionPct / 100) : 0;
@@ -1252,7 +1462,7 @@ function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate,
       comisionPct,
       consultorioId:     t.consultorioId || '',
       consultorioNombre: nombreCons(t.consultorioId),
-      metodoPago:        'Efectivo',
+      metodoPago,
       turnoId:           t.id,
       origenTurno:       true
     });
@@ -1265,6 +1475,13 @@ function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate,
     if (!pac) { showToast('Paciente no encontrado','error'); return; }
     const iconos = {asistio:'✅ Asistió', noAsistio:'❌ No asistió', reprogramo:'🔄 Reprogramó'};
     const tipoLabel = iconos[tipo];
+    // Si asistió → pedir medio de pago antes de continuar
+    let metodoPago = 'Efectivo';
+    if (tipo === 'asistio' && t.monto > 0) {
+      const res = await pedirMedioPago();
+      if (res.isDismissed) return; // canceló
+      metodoPago = res.value || 'Efectivo';
+    }
     const hito = {
       fecha: t.fecha, hora: t.hora, tipo,
       nota: tipoLabel + ' — ' + t.tipo + (t.consultorioId ? ' — ' + nombreCons(t.consultorioId) : '') + (t.notas ? ' | ' + t.notas : ''),
@@ -1274,16 +1491,16 @@ function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate,
     await onUpdatePac(pac.id, { consultas, ultimaConsulta: t.fecha });
     const nuevoEstado = tipo === 'asistio' ? 'Confirmado' : tipo === 'noAsistio' ? 'Cancelado' : t.estado;
     let ingresoId = null;
-    if (tipo === 'asistio' && t.monto > 0) ingresoId = await crearIngreso(t);
+    if (tipo === 'asistio' && t.monto > 0) ingresoId = await crearIngreso(t, metodoPago);
     await onUpdate(t.id, { asistencia: tipo, estado: nuevoEstado, ingresoId: ingresoId || null });
-    showToast(tipo === 'asistio' ? '✅ Asistencia registrada y cobro guardado en Finanzas' : tipoLabel + ' registrado');
+    showToast(tipo === 'asistio' ? '✅ Asistencia registrada — cobro por '+metodoPago+' guardado' : tipoLabel + ' registrado');
   };
 
   // ── Cambiar asistencia ya registrada ──────────────────────────────────────
   const cambiarAsistencia = async (t, nuevoTipo) => {
     const pac = pacs.find(p => p.id === t.pacienteId);
-    const iconos = {asistio:'✅ Asistió', noAsistio:'❌ No asistió', reprogramo:'🔄 Reprogramó'};
-    const tipoLabel = iconos[nuevoTipo];
+    const iconos = {asistio:'✅ Asistió', noAsistio:'❌ No asistió', reprogramo:'🔄 Reprogramó', agendado:'📅 Agendado'};
+    const tipoLabel = iconos[nuevoTipo]||nuevoTipo;
     // 1. Eliminar ingreso previo si el estado anterior era 'asistio'
     if (t.asistencia === 'asistio' && t.ingresoId) {
       try { await onDelIngreso(t.ingresoId); } catch(e) { console.warn('No se pudo eliminar ingreso previo', e); }
@@ -1298,9 +1515,18 @@ function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate,
         : [{ fecha:t.fecha, hora:t.hora, tipo:nuevoTipo, nota:tipoLabel+' — '+t.tipo, turnoId:t.id, peso:'' }, ...(pac.consultas||[])];
       await onUpdatePac(pac.id, { consultas });
     }
+    // Si se quiere volver a 'agendado' → limpiar asistencia completamente
+    if (nuevoTipo === 'agendado') {
+      await onUpdate(t.id, { asistencia: null, ingresoId: null, estado: 'Pendiente' });
+      showToast('Turno vuelto a estado Agendado');
+      return;
+    }
     // 3. Crear nuevo ingreso si el nuevo tipo es 'asistio'
     let nuevoIngresoId = null;
-    if (nuevoTipo === 'asistio' && t.monto > 0) nuevoIngresoId = await crearIngreso(t);
+    if (nuevoTipo === 'asistio' && t.monto > 0) {
+      const res = await pedirMedioPago();
+      if (!res.isDismissed) nuevoIngresoId = await crearIngreso(t, res.value || 'Efectivo');
+    }
     // 4. Actualizar turno
     const nuevoEstado = nuevoTipo==='asistio' ? 'Confirmado' : nuevoTipo==='noAsistio' ? 'Cancelado' : t.estado;
     await onUpdate(t.id, { asistencia: nuevoTipo, estado: nuevoEstado, ingresoId: nuevoIngresoId });
@@ -1325,7 +1551,11 @@ function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate,
         div({style:{fontSize:'.7rem',color:'var(--text-muted)'}}, ars(t.monto))
       ),
       div({style:{flex:1}},
-        div({style:{fontWeight:500,fontSize:'.9rem'}}, t.pacienteNombre),
+        div({
+          style:{fontWeight:500,fontSize:'.9rem',cursor:'pointer',color:'var(--green-mid)',textDecoration:'underline dotted'},
+          title:'Ver historia clínica',
+          onClick:()=>{ const p=pacs.find(p=>p.id===t.pacienteId); if(p) abrirPacHC(p); }
+        }, t.pacienteNombre),
         div({style:{fontSize:'.78rem',color:'var(--text-muted)'}}, t.tipo),
         !agrupar && t.consultorioId && span({style:{
           fontSize:'.68rem',padding:'1px 7px',borderRadius:10,marginTop:3,display:'inline-block',
@@ -1342,11 +1572,11 @@ function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate,
         ),
         // Opciones inline para cambiar asistencia
         cambiando && can('editTurno') && div({style:{marginTop:6,display:'flex',gap:4,flexWrap:'wrap'}},
-          ...['asistio','noAsistio','reprogramo']
+          ...['asistio','noAsistio','reprogramo','agendado']
             .filter(op => op !== t.asistencia)
             .map(op => {
-              const labels = {asistio:'✅ Asistió', noAsistio:'❌ No asistió', reprogramo:'🔄 Reprogramó'};
-              const clss   = {asistio:'asist-asistio', noAsistio:'asist-no-asistio', reprogramo:'asist-reprogramo'};
+              const labels = {asistio:'✅ Asistió', noAsistio:'❌ No asistió', reprogramo:'🔄 Reprogramó', agendado:'📅 Agendado'};
+              const clss   = {asistio:'asist-asistio', noAsistio:'asist-no-asistio', reprogramo:'asist-reprogramo', agendado:'asist-reprogramo'};
               return e('button',{
                 key:op, className:'asist-btn '+clss[op],
                 onClick:async ()=>{ setCambiando(false); await cambiarAsistencia(t, op); }
@@ -1365,6 +1595,15 @@ function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate,
         can('editTurno') && div({style:{display:'flex',gap:4,flexWrap:'wrap',justifyContent:'flex-end'}},
           !t.asistencia && t.estado!=='Confirmado' && Btn({cls:'btn-ghost',sm:true,onClick:()=>onUpdEst(t.id,'Confirmado')}, 'OK'),
           !t.asistencia && t.estado!=='Cancelado'  && Btn({cls:'btn-ghost',sm:true,onClick:()=>onUpdEst(t.id,'Cancelado')},  '✕'),
+          e('a',{
+            href:gcalUrl({...t, consultorioNombre:nombreCons(t.consultorioId)}),
+            target:'_blank', rel:'noopener',
+            title:'Agregar a Google Calendar',
+            style:{display:'inline-flex',alignItems:'center',gap:3,padding:'3px 9px',
+                   borderRadius:10,background:'#eff6ff',border:'1px solid #bfdbfe',
+                   fontSize:'.72rem',color:'#4285f4',fontWeight:600,textDecoration:'none',
+                   cursor:'pointer',whiteSpace:'nowrap'}
+          }, '📅 Agregar a Calendar'),
           Btn({cls:'btn-edit btn btn-sm',sm:true,onClick:()=>setEditTurno({...t})}, '✏️'),
           Btn({cls:'btn-danger',sm:true,onClick:()=>onDel(t.id)}, '🗑')
         )
@@ -1382,6 +1621,39 @@ function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate,
       map[key].turnos.push(t);
     });
     return Object.entries(map).filter(([,g]) => g.turnos.length > 0);
+  };
+
+  // ── Resumen comisiones del día (solo asistidos con consultorio con %) ─────
+  const resumenComisionesDia = () => {
+    const asistidos = tDelDia.filter(t=>t.asistencia==='asistio' && Number(t.monto)>0 && t.consultorioId);
+    const resumen = {};
+    asistidos.forEach(t => {
+      const cons = consultorios.find(c=>c.id===t.consultorioId);
+      if (!cons || !Number(cons.comision)) return;
+      if (!resumen[t.consultorioId]) resumen[t.consultorioId] = {nombre:cons.nombre, pct:Number(cons.comision), bruto:0, comision:0, n:0};
+      resumen[t.consultorioId].bruto    += Number(t.monto);
+      resumen[t.consultorioId].comision += Math.round(Number(t.monto)*Number(cons.comision)/100);
+      resumen[t.consultorioId].n++;
+    });
+    const filas = Object.values(resumen);
+    if (!filas.length) return null;
+    return div({style:{marginTop:20,borderTop:'2px solid var(--cream-dark)',paddingTop:14}},
+      div({style:{fontSize:'.75rem',fontWeight:700,color:'var(--text-mid)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:10}},
+        '💸 A dejar hoy por consultorio'
+      ),
+      ...filas.map(f => div({key:f.nombre,
+        style:{display:'flex',justifyContent:'space-between',alignItems:'center',
+               padding:'10px 14px',background:'white',borderRadius:'var(--radius-sm)',
+               border:'1px solid var(--cream-dark)',marginBottom:6}},
+        div({},
+          div({style:{fontWeight:600,fontSize:'.85rem',color:'var(--text-dark)'}}, f.nombre),
+          div({style:{fontSize:'.72rem',color:'var(--text-muted)',marginTop:2}},
+            f.n+' paciente'+(f.n!==1?'s':'')+' · bruto '+ars(f.bruto)+' · comisión '+f.pct+'%'
+          )
+        ),
+        div({style:{fontWeight:700,color:'#c0392b',fontSize:'.95rem'}}, ars(f.comision))
+      ))
+    );
   };
 
   return div({},
@@ -1447,7 +1719,8 @@ function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate,
                   ...g.turnos.map(t => e(TurnoCard,{key:t.id,t}))
                 )
               ))
-            : div({}, ...tDelDia.map(t => e(TurnoCard,{key:t.id,t})))
+            : div({}, ...tDelDia.map(t => e(TurnoCard,{key:t.id,t}))),
+        tDelDia.length > 0 && resumenComisionesDia()
       )
     ),
 
@@ -1464,7 +1737,26 @@ function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate,
           inp({type:'date',value:editTurno.fecha,onChange:ev=>setEditTurno({...editTurno,fecha:ev.target.value})})
         ),
         div({className:'form-group'}, lbl({},'Hora'),
-          inp({type:'time',value:editTurno.hora,onChange:ev=>setEditTurno({...editTurno,hora:ev.target.value})})
+          div({style:{display:'flex',gap:6,alignItems:'center'}},
+            e('select',{
+              value: editTurno.hora.split(':')[0],
+              onChange: ev => setEditTurno({...editTurno, hora: ev.target.value+':'+editTurno.hora.split(':')[1]}),
+              style:{flex:1}
+            },
+              ...[8,9,10,11,12,13,14,15,16,17,18,19,20].map(h=>
+                e('option',{key:h,value:String(h).padStart(2,'0')}, String(h).padStart(2,'0')+'hs')
+              )
+            ),
+            span({style:{color:'var(--text-muted)',fontWeight:500}}, ':'),
+            e('select',{
+              value: editTurno.hora.split(':')[1]||'00',
+              onChange: ev => setEditTurno({...editTurno, hora: editTurno.hora.split(':')[0]+':'+ev.target.value}),
+              style:{flex:1}
+            },
+              e('option',{value:'00'},'00 min'),
+              e('option',{value:'30'},'30 min'),
+            )
+          )
         ),
         consultorios.length > 0 && div({className:'form-group'}, lbl({},'Consultorio'),
           e('select',{value:editTurno.consultorioId||'',onChange:ev=>{
@@ -1508,23 +1800,53 @@ function Agenda({turnos, pacs, can, showToast, navigate, consultorios, onUpdate,
 
 // ─── FINANZAS ─────────────────────────────────────────────────────────────────
 function Finanzas({ingresos, consultorios, can, onDel}) {
-  const [filter, setFilter] = useState('todos');
-  const [mes, setMes] = useState(mesNow());
-  const filtered = ingresos.filter(i=>(filter==='todos'||i.tipo===filter)&&(!mes||(i.fecha||'').startsWith(mes))).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+  const [filter,     setFilter]     = useState('todos');
+  const [mes,        setMes]        = useState(mesNow());
+  const [filtCons,   setFiltCons]   = useState('todos');
+  const [vistaTab,   setVistaTab]   = useState('movimientos'); // 'movimientos' | 'consultorios'
 
-  // Totales brutos por tipo
+  const filtered = ingresos
+    .filter(i =>
+      (filter==='todos'||i.tipo===filter) &&
+      (!mes||(i.fecha||'').startsWith(mes)) &&
+      (filtCons==='todos'||i.consultorioId===filtCons)
+    )
+    .sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+
   const tot = ['consulta','ebook','pack'].reduce((acc,t)=>{ acc[t]=ingresos.filter(i=>i.tipo===t&&(i.fecha||'').startsWith(mes)).reduce((s,i)=>s+Number(i.monto||0),0); return acc; },{});
-  // Neto total del período filtrado (bruto - comisiones)
-  const totalBruto = filtered.reduce((s,i)=>s+Number(i.monto||0),0);
+  const totalBruto    = filtered.reduce((s,i)=>s+Number(i.monto||0),0);
   const totalComision = filtered.reduce((s,i)=>s+Number(i.montoComision||0),0);
-  const totalNeto = totalBruto - totalComision;
+  const totalNeto     = totalBruto - totalComision;
 
-  const icons = {consulta:'🩺',ebook:'📖',pack:'📦'};
+  const icons = {consulta:'🩺',ebook:'📖',pack:'📦',alquiler:'🏠'};
+
+  // ── Resumen por consultorio (para el mes seleccionado) ───────────────────
+  const diasDelMes = (() => {
+    if (!mes) return 0;
+    const [y,m] = mes.split('-').map(Number);
+    return new Date(y, m, 0).getDate();
+  })();
+
+  const resumenPorCons = (() => {
+    const ingMes = ingresos.filter(i=>(i.fecha||'').startsWith(mes));
+    const grupos = {};
+    // Incluir siempre todos los consultorios conocidos
+    consultorios.forEach(ct => { grupos[ct.id] = {nombre:ct.nombre, comisionPct:Number(ct.comision||0), bruto:0, comision:0, neto:0, consultas:0}; });
+    grupos['__sin'] = {nombre:'Sin consultorio', comisionPct:0, bruto:0, comision:0, neto:0, consultas:0};
+    ingMes.forEach(i => {
+      const key = (i.consultorioId && grupos[i.consultorioId]) ? i.consultorioId : '__sin';
+      grupos[key].bruto    += Number(i.monto||0);
+      grupos[key].comision += Number(i.montoComision||0);
+      grupos[key].neto     += Number(i.montoNeto||i.monto||0);
+      grupos[key].consultas++;
+    });
+    return Object.entries(grupos).filter(([,g])=>g.consultas>0 || g.bruto>0);
+  })();
 
   return div({},
     !can('delIngreso') && div({className:'restricted-banner'}, '🔒 No podés eliminar ingresos ya registrados'),
 
-    // Stats: bruto por tipo + neto total
+    // Stats
     div({className:'stats-grid',style:{gridTemplateColumns:'repeat(4,1fr)',marginBottom:20}},
       ...['consulta','ebook','pack'].map(t=>div({key:t,className:'stat-card'},
         span({className:'stat-icon'},icons[t]),
@@ -1538,52 +1860,114 @@ function Finanzas({ingresos, consultorios, can, onDel}) {
       )
     ),
 
-    div({style:{display:'flex',gap:8,marginBottom:16,flexWrap:'wrap',alignItems:'center'}},
-      ...['todos','consulta','ebook','pack'].map(f=>Btn({key:f,cls:filter===f?'btn-primary':'btn-secondary',sm:true,onClick:()=>setFilter(f)}, {todos:'Todos',consulta:'Consultas',ebook:'Ebooks',pack:'Packs'}[f])),
-      e('input',{type:'month',value:mes,onChange:ev=>setMes(ev.target.value),style:{width:'auto'}}),
-      div({style:{flex:1}}),
-      totalComision > 0 && span({style:{fontSize:'.82rem',color:'#c0392b',fontWeight:500}},
-        'Comisiones: -'+ars(totalComision)
-      ),
-      e('strong',{style:{color:'var(--green-mid)',marginLeft:8}}, 'Neto: '+ars(totalNeto)),
-      Btn({cls:'btn-secondary',sm:true,onClick:()=>exportXLS(
-        filtered.map(i=>({...i, montoNeto: i.montoNeto||i.monto, comisionPct: i.comisionPct||0, montoComision: i.montoComision||0})),
-        [{key:'fecha',label:'Fecha'},{key:'descripcion',label:'Descripción'},{key:'tipo',label:'Tipo'},
-         {key:'consultorioNombre',label:'Consultorio'},{key:'metodoPago',label:'Método de Pago'},
-         {key:'monto',label:'Monto Bruto (ARS)'},{key:'comisionPct',label:'Comisión %'},
-         {key:'montoComision',label:'Comisión (ARS)'},{key:'montoNeto',label:'Neto (ARS)'}],
-        'finanzas_'+mes
-      )}, '📥 Exportar Excel')
+    // Tabs vista
+    div({style:{display:'flex',gap:8,marginBottom:16}},
+      Btn({cls:vistaTab==='movimientos'?'btn-primary':'btn-secondary',sm:true,onClick:()=>setVistaTab('movimientos')}, '📋 Movimientos'),
+      Btn({cls:vistaTab==='consultorios'?'btn-primary':'btn-secondary',sm:true,onClick:()=>setVistaTab('consultorios')}, '🏥 Por consultorio')
     ),
 
-    Card({children:[div({className:'table-wrap'},
-      e('table',{},
-        e('thead',{},tr_({}, ...['Descripción','Tipo','Fecha','Consultorio','Método','Monto / Neto',''].map(h=>th_({key:h},h)))),
-        e('tbody',{}, ...filtered.map(i=>{
-          const tieneComision = i.montoComision > 0;
-          const neto = i.montoNeto || i.monto;
-          return tr_({key:i.id},
-            td_({},[div({style:{display:'flex',alignItems:'center',gap:10}}, div({className:`ingreso-icon ${i.tipo}`},icons[i.tipo]||'💰'), div({}, span({style:{fontWeight:500,display:'block'}},i.descripcion), i.origenTurno && span({style:{fontSize:'.68rem',color:'var(--text-muted)'}}, '📅 Auto-cobro desde turno')))]),
-            td_({}, Badge({cls:i.tipo==='consulta'?'bg':i.tipo==='ebook'?'by':'bb'}, i.tipo)),
-            td_({style:{color:'var(--text-muted)',fontSize:'.82rem'}}, i.fecha),
-            td_({style:{fontSize:'.78rem'}}, i.consultorioNombre || '-'),
-            td_({style:{fontSize:'.82rem'}}, i.metodoPago),
-            td_({},
-              tieneComision
-                ? div({},
-                    div({className:'monto-bruto'}, ars(i.monto)),
-                    div({className:'monto-neto'}, ars(neto)),
-                    span({className:'comision-badge'}, '-'+i.comisionPct+'% consultorio')
-                  )
-                : e('strong',{style:{color:'var(--green-mid)'}}, ars(neto))
-            ),
-            td_({}, can('delIngreso') ? Btn({cls:'btn-danger',sm:true,onClick:()=>onDel(i.id)}, '✕') : span({style:{fontSize:'.8rem',color:'var(--text-muted)'}},'🔒'))
-          );
-        }),
-        filtered.length===0 && tr_({key:'e'}, td_({colSpan:7}, EmptyState({icon:'💰',text:'Sin ingresos'})))
-        )
-      ))
-    ]}),
+    // ── VISTA MOVIMIENTOS ──────────────────────────────────────────────────
+    vistaTab==='movimientos' && div({},
+      div({style:{display:'flex',gap:8,marginBottom:16,flexWrap:'wrap',alignItems:'center'}},
+        ...['todos','consulta','ebook','pack'].map(f=>Btn({key:f,cls:filter===f?'btn-primary':'btn-secondary',sm:true,onClick:()=>setFilter(f)}, {todos:'Todos',consulta:'Consultas',ebook:'Ebooks',pack:'Packs'}[f])),
+        // Filtro por consultorio
+        consultorios.length > 0 && e('select',{
+          value:filtCons, onChange:ev=>setFiltCons(ev.target.value),
+          style:{fontSize:'.82rem',padding:'6px 10px',borderRadius:'var(--radius-sm)',border:'1px solid #ddd',background:'white'}
+        },
+          e('option',{value:'todos'},'Todos los consultorios'),
+          ...consultorios.map(ct=>e('option',{key:ct.id,value:ct.id},ct.nombre))
+        ),
+        e('input',{type:'month',value:mes,onChange:ev=>setMes(ev.target.value),style:{width:'auto'}}),
+        div({style:{flex:1}}),
+        totalComision > 0 && span({style:{fontSize:'.82rem',color:'#c0392b',fontWeight:500}}, 'Comisiones: -'+ars(totalComision)),
+        e('strong',{style:{color:'var(--green-mid)',marginLeft:8}}, 'Neto: '+ars(totalNeto)),
+        Btn({cls:'btn-secondary',sm:true,onClick:()=>exportXLS(
+          filtered.map(i=>({...i,montoNeto:i.montoNeto||i.monto,comisionPct:i.comisionPct||0,montoComision:i.montoComision||0})),
+          [{key:'fecha',label:'Fecha'},{key:'descripcion',label:'Descripción'},{key:'tipo',label:'Tipo'},
+           {key:'consultorioNombre',label:'Consultorio'},{key:'metodoPago',label:'Método de Pago'},
+           {key:'monto',label:'Monto Bruto (ARS)'},{key:'comisionPct',label:'Comisión %'},
+           {key:'montoComision',label:'Comisión (ARS)'},{key:'montoNeto',label:'Neto (ARS)'}],
+          'finanzas_'+mes
+        )}, '📥 Exportar Excel')
+      ),
+      Card({children:[div({className:'table-wrap'},
+        e('table',{},
+          e('thead',{},tr_({}, ...['Descripción','Tipo','Fecha','Consultorio','Método','Monto / Neto',''].map(h=>th_({key:h},h)))),
+          e('tbody',{}, ...filtered.map(i=>{
+            const tieneComision = i.montoComision > 0;
+            const neto = i.montoNeto || i.monto;
+            return tr_({key:i.id},
+              td_({},[div({style:{display:'flex',alignItems:'center',gap:10}}, div({className:`ingreso-icon ${i.tipo}`},icons[i.tipo]||'💰'), div({}, span({style:{fontWeight:500,display:'block'}},i.descripcion), i.origenTurno && span({style:{fontSize:'.68rem',color:'var(--text-muted)'}}, '📅 Auto-cobro')))]),
+              td_({}, Badge({cls:i.tipo==='consulta'?'bg':i.tipo==='ebook'?'by':i.tipo==='alquiler'?'br':'bb'}, i.tipo)),
+              td_({style:{color:'var(--text-muted)',fontSize:'.82rem'}}, i.fecha),
+              td_({style:{fontSize:'.78rem'}}, i.consultorioNombre || '-'),
+              td_({style:{fontSize:'.82rem'}}, i.metodoPago),
+              td_({},
+                tieneComision
+                  ? div({}, div({className:'monto-bruto'},ars(i.monto)), div({className:'monto-neto'},ars(neto)), span({className:'comision-badge'},'-'+i.comisionPct+'%'))
+                  : e('strong',{style:{color:'var(--green-mid)'}},ars(neto))
+              ),
+              td_({}, can('delIngreso') ? Btn({cls:'btn-danger',sm:true,onClick:()=>onDel(i.id)}, '✕') : span({style:{fontSize:'.8rem',color:'var(--text-muted)'}},'🔒'))
+            );
+          }),
+          filtered.length===0 && tr_({key:'e'}, td_({colSpan:7}, EmptyState({icon:'💰',text:'Sin ingresos'})))
+          )
+        ))
+      ]})
+    ),
+
+    // ── VISTA POR CONSULTORIO ──────────────────────────────────────────────
+    vistaTab==='consultorios' && div({},
+      div({style:{display:'flex',gap:8,marginBottom:16,alignItems:'center',flexWrap:'wrap'}},
+        e('input',{type:'month',value:mes,onChange:ev=>setMes(ev.target.value),style:{width:'auto'}}),
+        span({style:{fontSize:'.82rem',color:'var(--text-muted)'}},'Mes seleccionado — '+diasDelMes+' días'),
+        div({style:{flex:1}}),
+        Btn({cls:'btn-secondary',sm:true,onClick:()=>exportXLS(
+          resumenPorCons.map(([,g])=>({
+            consultorio:g.nombre, consultas:g.consultas,
+            bruto:g.bruto, comisionPct:g.comisionPct,
+            comisionMes:g.comision, netoMes:g.neto
+          })),
+          [{key:'consultorio',label:'Consultorio'},{key:'consultas',label:'Consultas'},
+           {key:'bruto',label:'Bruto (ARS)'},{key:'comisionPct',label:'Comisión %'},
+           {key:'comisionMes',label:'A dar en el mes (ARS)'},{key:'netoMes',label:'Neto para vos (ARS)'}],
+          'consultorios_'+mes
+        )}, '📥 Exportar Excel')
+      ),
+      resumenPorCons.length === 0
+        ? EmptyState({icon:'🏥', text:'Sin ingresos en este mes'})
+        : Card({children:[div({className:'table-wrap'},
+            e('table',{className:'cons-fin-table'},
+              e('thead',{},tr_({},
+                th_({key:'c'},'Consultorio'), th_({key:'n'},'Consultas'),
+                th_({key:'b'},'Bruto cobrado'), th_({key:'p'},'Comisión %'),
+                th_({key:'mm'},'A dar × mes 💸'), th_({key:'net'},'Tu neto 💵')
+              )),
+              e('tbody',{},
+                ...resumenPorCons.map(([cid,g]) => {
+                  return tr_({key:cid},
+                    td_({style:{fontWeight:500}}, g.nombre),
+                    td_({style:{textAlign:'center'}}, String(g.consultas)),
+                    td_({}, ars(g.bruto)),
+                    td_({style:{textAlign:'center'}}, g.comisionPct > 0 ? g.comisionPct+'%' : span({style:{color:'var(--text-muted)'}}, 'Sin comisión')),
+                    td_({style:{color:'#c0392b',fontWeight:600}}, g.comision > 0 ? ars(g.comision) : '-'),
+                    td_({style:{color:'var(--green-mid)',fontWeight:700}}, ars(g.neto))
+                  );
+                }),
+                // Fila totales
+                tr_({className:'cons-fin-row-total'},
+                  td_({}, 'TOTAL'),
+                  td_({style:{textAlign:'center'}}, String(resumenPorCons.reduce((s,[,g])=>s+g.consultas,0))),
+                  td_({}, ars(resumenPorCons.reduce((s,[,g])=>s+g.bruto,0))),
+                  td_({},''),
+                  td_({style:{color:'#c0392b'}}, ars(resumenPorCons.reduce((s,[,g])=>s+g.comision,0))),
+                  td_({style:{color:'var(--green-mid)'}}, ars(resumenPorCons.reduce((s,[,g])=>s+g.neto,0)))
+                )
+              )
+            )
+          )]})
+    )
   );
 }
 
@@ -1716,7 +2100,7 @@ function Usuarios({usuarios, user, showToast, db, auth}) {
 
 // ─── CONSULTORIOS ─────────────────────────────────────────────────────────────
 function Consultorios({consultorios, onSave, onUpdate, onDel}) {
-  const EMPTY = {nombre:'', direccion:'', telefono:'', comision:0, notas:''};
+  const EMPTY = {nombre:'', direccion:'', telefono:'', tipoGasto:'comision', comision:0, alquilerFijo:0, notas:''};
   const [showForm, setShowForm] = useState(false);
   const [form, setForm]         = useState({...EMPTY});
   const [editId, setEditId]     = useState(null);
@@ -1726,15 +2110,18 @@ function Consultorios({consultorios, onSave, onUpdate, onDel}) {
   const colorIdx = i => PALETA[i % PALETA.length];
 
   const abrirNuevo = () => { setForm({...EMPTY}); setEditId(null); setShowForm(true); };
-  const abrirEditar = (ct) => { setForm({nombre:ct.nombre,direccion:ct.direccion||'',telefono:ct.telefono||'',comision:ct.comision||0,notas:ct.notas||''}); setEditId(ct.id); setShowForm(true); };
+  const abrirEditar = (ct) => { setForm({nombre:ct.nombre,direccion:ct.direccion||'',telefono:ct.telefono||'',tipoGasto:ct.tipoGasto||'comision',comision:ct.comision||0,alquilerFijo:ct.alquilerFijo||0,notas:ct.notas||''}); setEditId(ct.id); setShowForm(true); };
   const cerrar = () => { setShowForm(false); setEditId(null); setForm({...EMPTY}); };
 
   const guardar = async () => {
     if (!form.nombre.trim()) { swalError('Nombre requerido','Ingresá un nombre para el consultorio'); return; }
-    const com = Number(form.comision)||0;
-    if (com < 0 || com > 100) { swalError('Comisión inválida','Debe ser un valor entre 0 y 100'); return; }
     setSaving(true);
-    const data = {...form, comision: com};
+    const data = {
+      ...form,
+      tipoGasto: form.tipoGasto||'comision',
+      comision: form.tipoGasto==='comision' ? (Number(form.comision)||0) : 0,
+      alquilerFijo: form.tipoGasto==='alquiler' ? (Number(form.alquilerFijo)||0) : 0
+    };
     if (editId) { await onUpdate(editId, data); }
     else        { await onSave(data); }
     setSaving(false);
@@ -1766,13 +2153,15 @@ function Consultorios({consultorios, onSave, onUpdate, onDel}) {
         ct.telefono  && div({style:{fontSize:'.78rem',color:'var(--text-muted)',marginBottom:8}}, '📞 '+ct.telefono),
         div({style:{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}},
           div({className:'cons-comision'},
-            Number(ct.comision||0) > 0
-              ? '💸 Comisión: '+ct.comision+'%'
-              : '✅ Sin comisión'
+            ct.tipoGasto==='alquiler' && Number(ct.alquilerFijo||0) > 0
+              ? '🏠 Alquiler fijo: '+ars(ct.alquilerFijo)+'/mes'
+              : Number(ct.comision||0) > 0
+                ? '💸 Comisión: '+ct.comision+'%'
+                : '✅ Sin costo'
           ),
-          Number(ct.comision||0) > 0 && span({style:{fontSize:'.72rem',color:'var(--text-muted)'}},
-            '— Se descuenta automáticamente al cobrar'
-          )
+          ct.tipoGasto==='alquiler' && Number(ct.alquilerFijo||0) > 0
+            ? span({style:{fontSize:'.72rem',color:'var(--text-muted)'}}, '— Se carga en Finanzas el 1° de cada mes')
+            : Number(ct.comision||0) > 0 && span({style:{fontSize:'.72rem',color:'var(--text-muted)'}}, '— Se descuenta automáticamente al cobrar')
         ),
         ct.notas && div({style:{fontSize:'.78rem',color:'var(--text-muted)',marginTop:8,fontStyle:'italic'}}, ct.notas),
         div({className:'cons-actions'},
@@ -1797,16 +2186,40 @@ function Consultorios({consultorios, onSave, onUpdate, onDel}) {
         ),
         campo('direccion','Dirección','text','ej: Av. Corrientes 1234'),
         campo('telefono','Teléfono','text','ej: 11-1234-5678'),
-        div({className:'form-group'},
-          lbl({}, 'Comisión del consultorio (%)'),
+        div({className:'form-group full'},
+          lbl({}, 'Tipo de gasto del consultorio'),
+          div({style:{display:'flex',gap:10,marginTop:4}},
+            ...[
+              {val:'comision', lbl:'💸 Comisión porcentual', desc:'Se descuenta % de cada consulta cobrada'},
+              {val:'alquiler', lbl:'🏠 Monto fijo mensual', desc:'Se carga en Finanzas el 1° de cada mes'},
+              {val:'ninguno',  lbl:'✅ Sin costo',           desc:'Sin comisión ni alquiler'}
+            ].map(op => div({key:op.val,
+              style:{flex:1,padding:'10px 12px',borderRadius:'var(--radius-sm)',border:'2px solid '+(form.tipoGasto===op.val?'var(--green-mid)':'#e2e8e0'),
+                     background:form.tipoGasto===op.val?'var(--green-mist)':'white',cursor:'pointer',transition:'all .15s'},
+              onClick:()=>setForm({...form,tipoGasto:op.val})},
+              div({style:{fontWeight:600,fontSize:'.8rem',color:'var(--text-dark)'}},'● '+op.lbl),
+              div({style:{fontSize:'.7rem',color:'var(--text-muted)',marginTop:2}},op.desc)
+            ))
+          )
+        ),
+        form.tipoGasto==='comision' && div({className:'form-group'},
+          lbl({}, 'Comisión (%)'),
           inp({type:'number', min:0, max:100, step:0.5, value:form.comision||0,
             onChange:ev=>setForm({...form,comision:ev.target.value}),
-            placeholder:'0 = sin comisión'
+            placeholder:'ej: 30'
           }),
           div({style:{fontSize:'.72rem',color:'var(--text-muted)',marginTop:4}},
-            Number(form.comision) > 0
-              ? '💡 Se descontará '+form.comision+'% del monto de cada consulta cobrada en este consultorio'
-              : '💡 Sin comisión — el monto cobrado es el ingreso neto completo'
+            Number(form.comision) > 0 ? '💡 Se descontará '+form.comision+'% de cada consulta cobrada aquí' : '💡 Ingresá el porcentaje de comisión'
+          )
+        ),
+        form.tipoGasto==='alquiler' && div({className:'form-group'},
+          lbl({}, 'Monto fijo mensual (ARS)'),
+          inp({type:'number', min:0, step:100, value:form.alquilerFijo||0,
+            onChange:ev=>setForm({...form,alquilerFijo:ev.target.value}),
+            placeholder:'ej: 50000'
+          }),
+          div({style:{fontSize:'.72rem',color:'var(--text-muted)',marginTop:4}},
+            '💡 El 1° de cada mes se registrará automáticamente '+ars(Number(form.alquilerFijo)||0)+' como egreso en Finanzas'
           )
         ),
         div({className:'form-group full'},
@@ -1840,10 +2253,10 @@ function FormPaciente({onSave, onCancel}) {
   ]});
 }
 
-function FormTurno({pacs, consultorios, onSave, onCancel, onAddPac}) {
+function FormTurno({pacs, consultorios, turnos, onSave, onCancel, onAddPac, initialFecha}) {
   const [f, setF] = useState({
-    pacienteId:'', pacienteNombre:'', fecha:today(), hora:'09:00',
-    tipo:'Consulta de seguimiento', estado:'Confirmado', monto:15000,
+    pacienteId:'', pacienteNombre:'', fecha:initialFecha||today(), hora:'09:00',
+    tipo:'Consulta de seguimiento', estado:'Confirmado', monto:40000,
     notas:'', consultorioId:'', consultorioNombre:''
   });
   // Sub-form nuevo paciente
@@ -1923,7 +2336,39 @@ function FormTurno({pacs, consultorios, onSave, onCancel, onAddPac}) {
       // ── Resto del formulario de turno ──────────────────────────────────────
       div({className:'form-grid',style:{marginTop:16}},
         div({className:'form-group'},lbl({},'Fecha'),inp({type:'date',value:f.fecha,onChange:ev=>setF({...f,fecha:ev.target.value})})),
-        div({className:'form-group'},lbl({},'Hora'),inp({type:'time',value:f.hora,onChange:ev=>setF({...f,hora:ev.target.value})})),
+        div({className:'form-group'},lbl({},'Hora'),
+          (() => {
+            const ocupados = new Set(
+              (turnos||[])
+                .filter(t => t.fecha === f.fecha && t.estado !== 'Cancelado')
+                .map(t => t.hora)
+            );
+            const slots = [];
+            [8,9,10,11,12,13,14,15,16,17,18,19,20].forEach(h =>
+              ['00','30'].forEach(m =>
+                slots.push(String(h).padStart(2,'0')+':'+m)
+              )
+            );
+            return e('select', {
+              value: f.hora,
+              onChange: ev => { if (!ocupados.has(ev.target.value)) setF({...f, hora: ev.target.value}); },
+              style: {width:'100%'}
+            },
+              ...slots.map(hora =>
+                e('option', {
+                  key: hora,
+                  value: hora,
+                  disabled: ocupados.has(hora),
+                  style: ocupados.has(hora)
+                    ? {color:'#ef4444', background:'#fef2f2'}
+                    : {}
+                },
+                  ocupados.has(hora) ? hora + '  —  ocupado' : hora
+                )
+              )
+            );
+          })()
+        ),
         consultorios.length > 0 && div({className:'form-group'}, lbl({},'Consultorio'),
           e('select',{value:f.consultorioId,onChange:ev=>{
             const ct = consultorios.find(c=>c.id===ev.target.value);
