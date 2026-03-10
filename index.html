@@ -1754,7 +1754,9 @@ function Agenda({turnos, pacs, can, showToast, navigate, consultorios, abrirPacH
               style:{flex:1}
             },
               e('option',{value:'00'},'00 min'),
+              e('option',{value:'15'},'15 min'),
               e('option',{value:'30'},'30 min'),
+              e('option',{value:'45'},'45 min')
             )
           )
         ),
@@ -1828,16 +1830,21 @@ function Finanzas({ingresos, consultorios, can, onDel}) {
   })();
 
   const resumenPorCons = (() => {
-    const ingMes = ingresos.filter(i=>(i.fecha||'').startsWith(mes));
+    // Solo ingresos del mes seleccionado, excluye alquileres (son egresos)
+    const ingMes = ingresos.filter(i=>(i.fecha||'').startsWith(mes) && i.tipo !== 'alquiler');
     const grupos = {};
-    // Incluir siempre todos los consultorios conocidos
     consultorios.forEach(ct => { grupos[ct.id] = {nombre:ct.nombre, comisionPct:Number(ct.comision||0), bruto:0, comision:0, neto:0, consultas:0}; });
     grupos['__sin'] = {nombre:'Sin consultorio', comisionPct:0, bruto:0, comision:0, neto:0, consultas:0};
     ingMes.forEach(i => {
       const key = (i.consultorioId && grupos[i.consultorioId]) ? i.consultorioId : '__sin';
-      grupos[key].bruto    += Number(i.monto||0);
-      grupos[key].comision += Number(i.montoComision||0);
-      grupos[key].neto     += Number(i.montoNeto||i.monto||0);
+      const bruto = Number(i.monto||0);
+      // Recalcular comisión desde el % del consultorio — ignora lo que esté guardado
+      // Esto corrige ingresos manuales donde montoComision puede ser 0 o incorrecto
+      const pct   = grupos[key].comisionPct;
+      const comision = pct > 0 ? Math.round(bruto * pct / 100) : 0;
+      grupos[key].bruto    += bruto;
+      grupos[key].comision += comision;
+      grupos[key].neto     += bruto - comision;
       grupos[key].consultas++;
     });
     return Object.entries(grupos).filter(([,g])=>g.consultas>0 || g.bruto>0);
@@ -2256,7 +2263,7 @@ function FormPaciente({onSave, onCancel}) {
 function FormTurno({pacs, consultorios, turnos, onSave, onCancel, onAddPac, initialFecha}) {
   const [f, setF] = useState({
     pacienteId:'', pacienteNombre:'', fecha:initialFecha||today(), hora:'09:00',
-    tipo:'Consulta de seguimiento', estado:'Confirmado', monto:40000,
+    tipo:'Consulta de seguimiento', estado:'Confirmado', monto:15000,
     notas:'', consultorioId:'', consultorioNombre:''
   });
   // Sub-form nuevo paciente
@@ -2345,7 +2352,7 @@ function FormTurno({pacs, consultorios, turnos, onSave, onCancel, onAddPac, init
             );
             const slots = [];
             [8,9,10,11,12,13,14,15,16,17,18,19,20].forEach(h =>
-              ['00','30'].forEach(m =>
+              ['00','15','30','45'].forEach(m =>
                 slots.push(String(h).padStart(2,'0')+':'+m)
               )
             );
