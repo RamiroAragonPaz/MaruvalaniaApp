@@ -306,6 +306,21 @@ textarea{resize:vertical;min-height:80px}
 .drive-link-box a:hover{text-decoration:underline}
 .drive-link-edit{display:flex;gap:8px;margin-bottom:14px}
 .drive-link-edit input{flex:1}
+/* ── Seguimiento panel ───────────────────────────────────────────────────── */
+.seguimiento-list{display:flex;flex-direction:column;gap:10px}
+.seguimiento-item{display:flex;align-items:center;gap:14px;padding:12px 16px;background:white;border-radius:var(--radius-sm);border-left:3px solid #f59e0b;box-shadow:var(--shadow-sm)}
+.seguimiento-item .seg-avatar{width:36px;height:36px;border-radius:50%;background:#fef3c7;display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700;color:#92400e;flex-shrink:0}
+.seguimiento-item .seg-info{flex:1;min-width:0}
+.seguimiento-item .seg-nombre{font-weight:600;font-size:.875rem;color:var(--text-dark)}
+.seguimiento-item .seg-detalle{font-size:.75rem;color:var(--text-muted);margin-top:2px}
+.seguimiento-item .seg-dias{font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:10px;background:#fef3c7;color:#92400e;flex-shrink:0}
+.seguimiento-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:20px;font-size:.68rem;font-weight:600;background:#fff7ed;color:#c2410c;border:1px solid #fed7aa}
+/* ── Plan card con acciones ──────────────────────────────────────────────── */
+.plan-card-actions{display:flex;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark)}
+/* ── Filtro estado clínico en Pacientes ──────────────────────────────────── */
+.ec-filter-btn{padding:5px 12px;border-radius:20px;border:1.5px solid #e2e8e0;background:white;font-family:'DM Sans',sans-serif;font-size:.78rem;font-weight:500;cursor:pointer;transition:all .18s;color:var(--text-mid)}
+.ec-filter-btn:hover{border-color:var(--green-light);background:var(--green-mist)}
+.ec-filter-btn.active{border-color:var(--green-mid);background:var(--green-mid);color:white}
 /* ── HC Selector / Multi-HC ──────────────────────────────────────────────── */
 .hc-selector-bar{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;padding:14px 16px;background:var(--cream);border-radius:var(--radius-sm);border:1.5px solid var(--cream-dark)}
 .hc-selector-bar label{font-size:.72rem;font-weight:600;color:var(--text-mid);text-transform:uppercase;letter-spacing:.8px;white-space:nowrap}
@@ -706,7 +721,7 @@ function App() {
       ),
 
       div({className:'page-content'},
-        page==='dashboard' && e(Dashboard, {pacs,turnos,ingresos,navigate,setSelPac,can}),
+        page==='dashboard' && e(Dashboard, {pacs,turnos,ingresos,navigate,setSelPac,abrirPacHC,can}),
         page==='pacientes' && e(Pacientes, {pacs,navigate,setSelPac,can,onDel:id=>swalConfirm('Eliminar paciente','Esta accion no se puede deshacer').then(r=>r.isConfirmed&&delFB('pacientes',id).then(()=>showToast('Paciente eliminado')))}),
         page==='paciente-detalle'&&selPac && e(PacienteDetalle, {pac:selPac,navigate,setSelPac,can,showToast,initialTab:selPacTab,onUpdate:(id,data)=>updateFB('pacientes',id,data)}),
         page==='agenda' && e(Agenda, {turnos,pacs,can,showToast,navigate,consultorios,abrirPacHC,onFechaChange:setAgendaFecha,
@@ -855,16 +870,34 @@ function MiniCalendar({turnos, selectedDate, onSelectDate}) {
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-function Dashboard({pacs, turnos, ingresos, navigate, setSelPac, can}) {
+function Dashboard({pacs, turnos, ingresos, navigate, setSelPac, abrirPacHC, can}) {
   const hoy = today(), mes = mesNow();
   const [selFecha, setSelFecha] = useState(hoy);
 
   const thoy    = turnos.filter(t=>t.fecha===hoy).sort((a,b)=>a.hora.localeCompare(b.hora));
   const tSelDay = turnos.filter(t=>t.fecha===selFecha).sort((a,b)=>a.hora.localeCompare(b.hora));
-  const ingMesBruto = ingresos.filter(i=>(i.fecha||'').startsWith(mes)).reduce((s,i)=>s+Number(i.monto||0),0);
+  const ingMesBruto    = ingresos.filter(i=>(i.fecha||'').startsWith(mes)).reduce((s,i)=>s+Number(i.monto||0),0);
   const ingMesComision = ingresos.filter(i=>(i.fecha||'').startsWith(mes)).reduce((s,i)=>s+Number(i.montoComision||0),0);
   const ingMes = ingMesBruto - ingMesComision;
-  const recent  = [...pacs].filter(p=>p.ultimaConsulta).sort((a,b)=>b.ultimaConsulta.localeCompare(a.ultimaConsulta)).slice(0,5);
+
+  // ── Pacientes para dar seguimiento (primera consulta confirmada hace 14–21 días) ──
+  const hoyDate = new Date(hoy + 'T00:00:00');
+  const seguimientoList = (() => {
+    // Buscar turnos confirmados (asistio) cuya fecha esté entre 14 y 21 días atrás
+    const resultado = [];
+    const visto = new Set();
+    turnos
+      .filter(t => t.asistencia === 'asistio')
+      .forEach(t => {
+        if (!t.fecha || visto.has(t.pacienteId)) return;
+        const diff = Math.round((hoyDate - new Date(t.fecha + 'T00:00:00')) / 86400000);
+        if (diff >= 14 && diff <= 21) {
+          const pac = pacs.find(p => p.id === t.pacienteId);
+          if (pac) { resultado.push({pac, turno:t, diff}); visto.add(t.pacienteId); }
+        }
+      });
+    return resultado.sort((a,b) => b.diff - a.diff);
+  })();
 
   const statCard = (cls,icon,val,lbl_) => div({className:'stat-card '+cls,key:lbl_},
     span({className:'stat-icon'},icon),
@@ -887,10 +920,8 @@ function Dashboard({pacs, turnos, ingresos, navigate, setSelPac, can}) {
     ),
 
     // Fila principal: calendario + turnos del dia seleccionado
-    div({className:'dash-main-grid',style:{display:'grid',gridTemplateColumns:'300px 1fr',gap:20,marginBottom:0}},
-
+    div({className:'dash-main-grid',style:{display:'grid',gridTemplateColumns:'300px 1fr',gap:20,marginBottom:20}},
       e(MiniCalendar, {turnos, selectedDate:selFecha, onSelectDate:setSelFecha}),
-
       Card({children:[
         div({className:'card-header'},
           span({className:'card-title'}, 'Turnos — '+dateLabel(selFecha)),
@@ -911,25 +942,87 @@ function Dashboard({pacs, turnos, ingresos, navigate, setSelPac, can}) {
               ))
         )
       ]})
-    )
-  );
+    ),
+
+    // ── Panel Dar Seguimiento ────────────────────────────────────────────────
+    Card({children:[
+      div({className:'card-header'},
+        div({style:{display:'flex',alignItems:'center',gap:10}},
+          span({className:'card-title'}, '🌿 Dar Seguimiento'),
+          seguimientoList.length > 0 && span({style:{background:'#f59e0b',color:'white',borderRadius:20,fontSize:'.68rem',fontWeight:700,padding:'2px 8px'}}, seguimientoList.length)
+        ),
+        Btn({cls:'btn-ghost',sm:true,onClick:()=>navigate('pacientes')}, 'Ver pacientes')
+      ),
+      div({className:'card-body'},
+        seguimientoList.length === 0
+          ? div({style:{padding:'16px 0',textAlign:'center',color:'var(--text-muted)',fontSize:'.875rem'}},
+              '✅ Sin pacientes pendientes de seguimiento en esta ventana (14–21 días post-consulta).'
+            )
+          : div({className:'seguimiento-list'},
+              ...seguimientoList.map(({pac, turno, diff}) =>
+                div({key:pac.id, className:'seguimiento-item'},
+                  div({className:'seg-avatar'}, ini(pac.nombre, pac.apellido)),
+                  div({className:'seg-info'},
+                    div({className:'seg-nombre',
+                      style:{cursor:'pointer'},
+                      onClick:()=>{ setSelPac(pac); abrirPacHC(pac); }
+                    }, pac.nombre+' '+pac.apellido),
+                    div({className:'seg-detalle'},
+                      'Última consulta: '+turno.fecha+' — '+turno.tipo,
+                      pac.telefono && span({style:{marginLeft:8,color:'var(--green-mid)'}}, '📱 '+pac.telefono)
+                    )
+                  ),
+                  span({className:'seg-dias'}, diff+' días'),
+                  div({style:{display:'flex',gap:6,flexShrink:0,flexWrap:'wrap'}},
+                    pac.telefono && e('a',{
+                      href:'https://wa.me/'+pac.telefono.replace(/\D/g,''),
+                      target:'_blank', rel:'noopener',
+                      className:'btn btn-sm',
+                      style:{background:'#25d366',color:'white',textDecoration:'none'}
+                    }, '💬 WhatsApp'),
+                    e('a',{
+                      href: gcalSeguimientoUrl(pac, turno.fecha),
+                      target:'_blank', rel:'noopener',
+                      className:'btn btn-secondary btn-sm'
+                    }, '📅 Agendar')
+                  )
+                )
+              )
+            )
+      )
+    ]}
+  ));
 }
 
 
 // ─── PACIENTES ────────────────────────────────────────────────────────────────
 function Pacientes({pacs, navigate, setSelPac, can, onDel}) {
-  const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState('Todos');
+  const [search,   setSearch]   = useState('');
+  const [filter,   setFilter]   = useState('Todos');
+  const [filtroEC, setFiltroEC] = useState(''); // estado clínico
+
+  const EC_LABELS = {
+    inicial:     {lbl:'Estado inicial',     emoji:'🟦', cls:'bb'},
+    evaluacion:  {lbl:'Estado evaluación',  emoji:'🟨', cls:'by'},
+    seguimiento: {lbl:'Estado seguimiento', emoji:'🟩', cls:'bg'},
+  };
+
   const filtered = pacs.filter(p => {
     const q = search.toLowerCase();
-    return `${p.nombre} ${p.apellido} ${p.email||''}`.toLowerCase().includes(q) && (filter==='Todos'||p.estado===filter);
+    const matchText   = `${p.nombre} ${p.apellido} ${p.email||''}`.toLowerCase().includes(q);
+    const matchEstado = filter==='Todos' || p.estado===filter;
+    const matchEC     = !filtroEC || p.estadoClinico===filtroEC;
+    return matchText && matchEstado && matchEC;
   });
+
   return div({},
     !can('delPac') && div({className:'restricted-banner'}, '🔒 Como asistente solo podés ver fichas y registrar consultas'),
-    div({style:{display:'flex',gap:12,marginBottom:20,flexWrap:'wrap',alignItems:'center'}},
+
+    // Barra de filtros
+    div({style:{display:'flex',gap:12,marginBottom:12,flexWrap:'wrap',alignItems:'center'}},
       div({className:'search-wrap',style:{flex:1,minWidth:200}},
         span({className:'search-icon'}, '🔍'),
-        inp({placeholder:'Buscar...', value:search, onChange:ev=>setSearch(ev.target.value)})
+        inp({placeholder:'Buscar por nombre, apellido o email...', value:search, onChange:ev=>setSearch(ev.target.value)})
       ),
       e('select',{value:filter,onChange:ev=>setFilter(ev.target.value),style:{width:'auto'}},
         e('option',{},'Todos'),e('option',{},'Activo'),e('option',{},'Inactivo')
@@ -940,19 +1033,47 @@ function Pacientes({pacs, navigate, setSelPac, can, onDel}) {
          {key:'telefono',label:'Teléfono'},{key:'edad',label:'Edad'},{key:'sexo',label:'Sexo'},
          {key:'peso',label:'Peso (kg)'},{key:'talla',label:'Talla (cm)'},{key:'imc',label:'IMC'},
          {key:'objetivo',label:'Objetivo'},{key:'dni',label:'DNI / CUIL'},
-         {key:'estado',label:'Estado'},{key:'fechaAlta',label:'Fecha Alta'},{key:'ultimaConsulta',label:'Última Consulta'}],
+         {key:'estado',label:'Estado'},{key:'estadoClinico',label:'Estado Clínico'},
+         {key:'fechaAlta',label:'Fecha Alta'},{key:'ultimaConsulta',label:'Última Consulta'}],
         'pacientes_nutriapp'
       )}, '📥 Exportar Excel')
     ),
+
+    // Filtros rápidos por estado clínico
+    div({style:{display:'flex',gap:8,marginBottom:20,flexWrap:'wrap',alignItems:'center'}},
+      span({style:{fontSize:'.72rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.8px',marginRight:4}},'Estado clínico:'),
+      e('button',{className:'ec-filter-btn'+(filtroEC===''?' active':''), onClick:()=>setFiltroEC('')}, 'Todos'),
+      ...Object.entries(EC_LABELS).map(([val,{lbl,emoji}]) =>
+        e('button',{
+          key:val,
+          className:'ec-filter-btn'+(filtroEC===val?' active':''),
+          onClick:()=>setFiltroEC(filtroEC===val?'':val)
+        }, emoji+' '+lbl)
+      ),
+      filtroEC && span({style:{fontSize:'.78rem',color:'var(--text-muted)',marginLeft:4}},
+        filtered.length+' paciente'+(filtered.length!==1?'s':'')+' encontrado'+(filtered.length!==1?'s':'')
+      )
+    ),
+
     Card({children:[
       div({className:'table-wrap'},
         e('table',{},
-          e('thead',{}, tr_({}, ...['Paciente','Edad','Objetivo','IMC','DNI / CUIL','Última consulta','Estado',''].map(h=>th_({key:h},h)))),
-          e('tbody',{}, ...filtered.map(p =>
-            tr_({key:p.id},
-              td_({}, div({style:{display:'flex',alignItems:'center',gap:10}}, div({className:'av'},ini(p.nombre,p.apellido)), div({}, div({style:{fontWeight:500,cursor:'pointer',color:'var(--green-mid)'},onClick:()=>{setSelPac(p);navigate('paciente-detalle');}},`${p.nombre} ${p.apellido}`), div({style:{fontSize:'.72rem',color:'var(--text-muted)'}},p.email)))),
+          e('thead',{}, tr_({}, ...['Paciente','Edad','Estado clínico','IMC','DNI / CUIL','Última consulta','Estado',''].map(h=>th_({key:h},h)))),
+          e('tbody',{}, ...filtered.map(p => {
+            const ec = EC_LABELS[p.estadoClinico];
+            return tr_({key:p.id},
+              td_({}, div({style:{display:'flex',alignItems:'center',gap:10}},
+                div({className:'av'},ini(p.nombre,p.apellido)),
+                div({},
+                  div({style:{fontWeight:500,cursor:'pointer',color:'var(--green-mid)'},onClick:()=>{setSelPac(p);navigate('paciente-detalle');}},`${p.nombre} ${p.apellido}`),
+                  div({style:{fontSize:'.72rem',color:'var(--text-muted)'}},p.email)
+                )
+              )),
               td_({}, `${p.edad} años`),
-              td_({}, Badge({cls:'bb'}, p.objetivo)),
+              td_({}, ec
+                ? span({className:'badge '+(ec.cls)}, ec.emoji+' '+ec.lbl)
+                : span({style:{fontSize:'.78rem',color:'var(--text-muted)'}}, '—')
+              ),
               td_({}, span({style:{fontWeight:600,color:p.imc>25?'#dc2626':'var(--green-mid)'}},p.imc)),
               td_({style:{fontSize:'.82rem'}}, p.dni||'-'),
               td_({style:{fontSize:'.82rem',color:'var(--text-muted)'}}, p.ultimaConsulta||'-'),
@@ -961,8 +1082,9 @@ function Pacientes({pacs, navigate, setSelPac, can, onDel}) {
                 Btn({cls:'btn-ghost',sm:true,onClick:()=>{setSelPac(p);navigate('paciente-detalle');}}, 'Ver'),
                 can('delPac') && Btn({cls:'btn-danger',sm:true,onClick:()=>onDel(p.id)}, '✕')
               ))
-            )
-          ), filtered.length===0 && tr_({key:'e'}, td_({colSpan:8}, EmptyState({icon:'🔍',text:'No se encontraron pacientes'}))))
+            );
+          }),
+          filtered.length===0 && tr_({key:'e'}, td_({colSpan:8}, EmptyState({icon:'🔍',text:'No se encontraron pacientes'}))))
         )
       )
     ]}),
@@ -1141,6 +1263,11 @@ function PacienteDetalle({pac, navigate, setSelPac, can, showToast, onUpdate, in
       const ref = await addDoc(collection(db,'pacientes',pac.id,'historias_clinicas'), {...datos, creadoEn:serverTimestamp()});
       setHcSelId(ref.id);
     }
+    // Espejamos estadoClinico en el doc del paciente para poder filtrar desde la lista
+    if (hc.estadoClinico) {
+      await updateDoc(doc(db,'pacientes',pac.id), {estadoClinico: hc.estadoClinico});
+      setSelPac({...pac, estadoClinico: hc.estadoClinico});
+    }
     setHcEdit(false); setHcSaving(false); showToast('Historia clínica guardada');
   };
 
@@ -1256,7 +1383,7 @@ function PacienteDetalle({pac, navigate, setSelPac, can, showToast, onUpdate, in
     ),
 
     div({className:'tabs'},
-      ...[['info','Información'],['hc','Historia Clínica'],['consultas','Consultas'],['planes','Planes e Informes'],['notas','Notas']].map(([k,v]) =>
+      ...[['info','Información'],['hc','Historia Clínica'],['consultas','Consultas'],['planes','Planes e Informes']].map(([k,v]) =>
         e('button',{key:k,className:'tab-btn'+(tab===k?' active':''),onClick:()=>setTab(k)}, v)
       )
     ),
@@ -1578,35 +1705,56 @@ function PacienteDetalle({pac, navigate, setSelPac, can, showToast, onUpdate, in
       // Lista de planes
       div({style:{display:'flex',justifyContent:'space-between',marginBottom:12}},
         span({style:{fontSize:'.875rem',color:'var(--text-muted)'}},(pac.planes||[]).length+' plan(es) / informe(s)'),
-        can('editPac') && Btn({sm:true,onClick:()=>setShowP(true)}, '+ Agregar plan / informe')
+        can('editPac') && Btn({sm:true,onClick:()=>{ setNp({nombre:'',tipo:'',fecha:today(),driveUrl:''}); setShowP(true); }}, '+ Agregar plan / informe')
       ),
       (pac.planes||[]).length===0 ? EmptyState({icon:'📄',text:'Sin planes ni informes cargados'}) :
       div({}, ...(pac.planes||[]).map((pl,i)=>div({key:i,className:'plan-card'},
         div({style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}},
-          div({},
-            e('h4',{}, '📋 '+pl.nombre),
-            e('p',{}, pl.tipo+' — '+pl.fecha),
-            pl.driveUrl && e('a',{href:pl.driveUrl,target:'_blank',rel:'noopener',style:{fontSize:'.75rem',color:'var(--green-mid)',display:'inline-flex',alignItems:'center',gap:4,marginTop:4}}, '📂 Ver en Drive')
-          )
-        )
+          div({style:{flex:1}}),
+          e('div',{})
+        ),
+        // edición inline del plan
+        showP && np._editIdx === i
+          ? div({},
+              div({className:'form-grid',style:{marginTop:8}},
+                div({className:'form-group full'},lbl({},'Nombre'),inp({value:np.nombre,onChange:ev=>setNp({...np,nombre:ev.target.value})})),
+                div({className:'form-group'},lbl({},'Tipo'),inp({value:np.tipo,onChange:ev=>setNp({...np,tipo:ev.target.value})})),
+                div({className:'form-group'},lbl({},'Fecha'),inp({type:'date',value:np.fecha,onChange:ev=>setNp({...np,fecha:ev.target.value})})),
+                div({className:'form-group full'},lbl({},'Link Drive'),inp({value:np.driveUrl||'',placeholder:'https://drive.google.com/...',onChange:ev=>setNp({...np,driveUrl:ev.target.value})}))
+              ),
+              div({className:'plan-card-actions'},
+                Btn({cls:'btn-secondary',sm:true,onClick:()=>setShowP(false)}, 'Cancelar'),
+                Btn({sm:true,onClick:async()=>{
+                  if(!np.nombre) return;
+                  const planes = (pac.planes||[]).map((p_,j)=>j===i?{nombre:np.nombre,tipo:np.tipo,fecha:np.fecha,driveUrl:np.driveUrl}:p_);
+                  await onUpdate(pac.id,{planes}); setSelPac({...pac,planes}); setShowP(false); showToast('Plan actualizado');
+                }}, '💾 Guardar cambios')
+              )
+            )
+          : div({},
+              e('h4',{}, '📋 '+pl.nombre),
+              e('p',{style:{fontSize:'.82rem',color:'var(--text-muted)',marginTop:3}}, pl.tipo+(pl.tipo&&pl.fecha?' — ':'')+pl.fecha),
+              pl.driveUrl && e('a',{href:pl.driveUrl,target:'_blank',rel:'noopener',style:{fontSize:'.75rem',color:'var(--green-mid)',display:'inline-flex',alignItems:'center',gap:4,marginTop:6}}, '📂 Ver en Drive'),
+              can('editPac') && div({className:'plan-card-actions'},
+                Btn({cls:'btn-edit btn-sm',onClick:()=>{ setNp({nombre:pl.nombre,tipo:pl.tipo,fecha:pl.fecha,driveUrl:pl.driveUrl||'',_editIdx:i}); setShowP(true); }}, '✏️ Editar'),
+                Btn({cls:'btn-danger btn-sm',onClick:()=>swalConfirm('Eliminar plan','Esta acción no se puede deshacer').then(async r=>{
+                  if(!r.isConfirmed) return;
+                  const planes = (pac.planes||[]).filter((_,j)=>j!==i);
+                  await onUpdate(pac.id,{planes}); setSelPac({...pac,planes}); showToast('Plan eliminado');
+                })}, '✕ Eliminar')
+              )
+            )
       ))),
-      showP && Modal({title:'Agregar plan / informe',onClose:()=>setShowP(false),footer:div({},Btn({cls:'btn-secondary',onClick:()=>setShowP(false)},'Cancelar'),Btn({onClick:savePlan},'Guardar')),children:
+      // Modal agregar nuevo plan (solo cuando _editIdx no definido)
+      showP && np._editIdx === undefined && Modal({title:'Agregar plan / informe',onClose:()=>setShowP(false),footer:div({},Btn({cls:'btn-secondary',onClick:()=>setShowP(false)},'Cancelar'),Btn({onClick:savePlan},'Guardar')),children:
         div({className:'form-grid'},
           div({className:'form-group full'},lbl({},'Nombre del plan / informe'),inp({value:np.nombre,onChange:ev=>setNp({...np,nombre:ev.target.value})})),
           div({className:'form-group'},lbl({},'Tipo'),inp({value:np.tipo,onChange:ev=>setNp({...np,tipo:ev.target.value})})),
           div({className:'form-group'},lbl({},'Fecha'),inp({type:'date',value:np.fecha,onChange:ev=>setNp({...np,fecha:ev.target.value})})),
           div({className:'form-group full'},lbl({},'Link Drive (opcional)'),inp({value:np.driveUrl||'',placeholder:'https://drive.google.com/...',onChange:ev=>setNp({...np,driveUrl:ev.target.value})}))
         )
-      }
-    ),
-
-    // ── TAB: Notas ───────────────────────────────────────────────────────────
-    tab==='notas' && Card({children:[div({className:'card-body'},
-      edit&&can('editPac') ? div({},
-        e('textarea',{rows:6,value:form.notas||'',onChange:ev=>setForm({...form,notas:ev.target.value})}),
-        Btn({onClick:saveNotas,cls:'btn-primary',sm:true}, 'Guardar notas')
-      ) : div({style:{padding:14,background:'var(--cream)',borderRadius:'var(--radius-sm)',fontSize:'.875rem',lineHeight:1.6,whiteSpace:'pre-wrap',minHeight:80}}, pac.notas||'Sin notas.')
-    )]})
+      })
+    )
   )
 )};
 
@@ -1631,6 +1779,28 @@ function gcalUrl(turno) {
     + '&dates='   + start + '/' + end
     + '&details=' + detalle
     + '&location='+ lugar;
+}
+
+// ─── GOOGLE CALENDAR — SEGUIMIENTO ───────────────────────────────────────────
+function gcalSeguimientoUrl(pac, turnoFecha) {
+  // Programa el seguimiento 15 días después del turno
+  const base = new Date(turnoFecha + 'T00:00:00');
+  base.setDate(base.getDate() + 15);
+  const fecha = base.toISOString().split('T')[0];
+  const pad   = n => String(n).padStart(2,'0');
+  const start = fecha.replace(/-/g,'') + 'T090000';
+  const end   = fecha.replace(/-/g,'') + 'T093000';
+  const titulo  = encodeURIComponent('🌿 Dar Seguimiento — ' + (pac.nombre||'') + ' ' + (pac.apellido||''));
+  const detalle = encodeURIComponent(
+    'Seguimiento post-consulta del ' + turnoFecha + '\n' +
+    'Paciente: ' + (pac.nombre||'') + ' ' + (pac.apellido||'') + '\n' +
+    (pac.telefono ? 'Tel: ' + pac.telefono : '') + '\n' +
+    'Consultarle cómo le está yendo con el plan alimentario.'
+  );
+  return 'https://calendar.google.com/calendar/render?action=TEMPLATE'
+    + '&text='    + titulo
+    + '&dates='   + start + '/' + end
+    + '&details=' + detalle;
 }
 
 // ─── AGENDA ───────────────────────────────────────────────────────────────────
@@ -1748,7 +1918,12 @@ function Agenda({turnos, pacs, can, showToast, navigate, consultorios, abrirPacH
     let ingresoId = null;
     if (tipo === 'asistio' && t.monto > 0) ingresoId = await crearIngreso(t, metodoPago);
     await onUpdate(t.id, { asistencia: tipo, estado: nuevoEstado, ingresoId: ingresoId || null });
-    showToast(tipo === 'asistio' ? '✅ Asistencia registrada — cobro por '+metodoPago+' guardado' : tipoLabel + ' registrado');
+    if (tipo === 'asistio') {
+      const segUrl = gcalSeguimientoUrl(pac, t.fecha);
+      showToast('✅ Asistencia registrada — cobro por '+metodoPago+' guardado — <a href="'+segUrl+'" target="_blank" style="color:#fff;font-weight:700;text-decoration:underline">🌿 Agendar Seguimiento (+15 días)</a>');
+    } else {
+      showToast(tipoLabel + ' registrado');
+    }
   };
 
   // ── Cambiar asistencia ya registrada ──────────────────────────────────────
