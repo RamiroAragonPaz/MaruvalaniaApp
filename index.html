@@ -375,9 +375,9 @@ textarea{resize:vertical;min-height:80px}
 // ─── IMPORTS ──────────────────────────────────────────────────────────────────
 import { initializeApp }                        from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
 import { getAuth, signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-import { getFirestore, collection, doc,
+import { getFirestore, collection, collectionGroup, doc,
          addDoc, updateDoc, deleteDoc,
-         onSnapshot, setDoc, getDoc,
+         onSnapshot, setDoc, getDoc, getDocs,
          serverTimestamp, orderBy, query }      from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
 // ─── REACT ────────────────────────────────────────────────────────────────────
@@ -578,6 +578,7 @@ function App() {
   const [ebooks, setEbooks]   = useState([]);
   const [usuarios,setUsuarios]= useState([]);
   const [consultorios,setConsultorios] = useState([]);
+  const [ecMap, setEcMap] = useState({}); // pacienteId → estadoClinico (de la HC más reciente)
   const [selPacTab,  setSelPacTab]  = useState('info');
   const [agendaFecha, setAgendaFecha] = useState(null); // fecha seleccionada en Agenda
 
@@ -611,6 +612,18 @@ function App() {
     listen('ingresos', setIngresos);
     listen('ebooks', setEbooks);
     listen('consultorios', setConsultorios);
+    // Escuchar todas las HCs para construir mapa pacienteId → estadoClinico más reciente
+    const qHC = query(collectionGroup(db,'historias_clinicas'), orderBy('fechaConsulta','desc'));
+    unsubs.push(onSnapshot(qHC, snap => {
+      const map = {};
+      snap.docs.forEach(d => {
+        // El path es: pacientes/{pacId}/historias_clinicas/{hcId}
+        const pacId = d.ref.parent.parent.id;
+        const ec = d.data().estadoClinico;
+        if (ec && !map[pacId]) map[pacId] = ec; // solo toma la primera (más reciente por orderBy desc)
+      });
+      setEcMap(map);
+    }, err => console.warn('ecMap listener:', err.message)));
     if (isAdmin) {
       unsubs.push(onSnapshot(collection(db,'usuarios'), s => setUsuarios(s.docs.map(d=>({id:d.id,...d.data()}))), e=>console.warn(e)));
     }
@@ -722,7 +735,7 @@ function App() {
 
       div({className:'page-content'},
         page==='dashboard' && e(Dashboard, {pacs,turnos,ingresos,navigate,setSelPac,abrirPacHC,can}),
-        page==='pacientes' && e(Pacientes, {pacs,navigate,setSelPac,can,onDel:id=>swalConfirm('Eliminar paciente','Esta accion no se puede deshacer').then(r=>r.isConfirmed&&delFB('pacientes',id).then(()=>showToast('Paciente eliminado')))}),
+        page==='pacientes' && e(Pacientes, {pacs,ecMap,navigate,setSelPac,can,onDel:id=>swalConfirm('Eliminar paciente','Esta accion no se puede deshacer').then(r=>r.isConfirmed&&delFB('pacientes',id).then(()=>showToast('Paciente eliminado')))}),
         page==='paciente-detalle'&&selPac && e(PacienteDetalle, {pac:selPac,navigate,setSelPac,can,showToast,initialTab:selPacTab,onUpdate:(id,data)=>updateFB('pacientes',id,data)}),
         page==='agenda' && e(Agenda, {turnos,pacs,can,showToast,navigate,consultorios,abrirPacHC,onFechaChange:setAgendaFecha,
   onUpdate:(id,data)=>updateFB('turnos',id,data).then(()=>showToast('Turno actualizado')),
@@ -883,11 +896,10 @@ function Dashboard({pacs, turnos, ingresos, navigate, setSelPac, abrirPacHC, can
   // ── Pacientes para dar seguimiento (primera consulta confirmada hace 14–21 días) ──
   const hoyDate = new Date(hoy + 'T00:00:00');
   const seguimientoList = (() => {
-    // Buscar turnos confirmados (asistio) cuya fecha esté entre 14 y 21 días atrás
     const resultado = [];
     const visto = new Set();
     turnos
-      .filter(t => t.asistencia === 'asistio')
+      .filter(t => t.asistencia === 'asistio' && t.tipo === 'Primera consulta')
       .forEach(t => {
         if (!t.fecha || visto.has(t.pacienteId)) return;
         const diff = Math.round((hoyDate - new Date(t.fecha + 'T00:00:00')) / 86400000);
@@ -996,10 +1008,10 @@ function Dashboard({pacs, turnos, ingresos, navigate, setSelPac, abrirPacHC, can
 
 
 // ─── PACIENTES ────────────────────────────────────────────────────────────────
-function Pacientes({pacs, navigate, setSelPac, can, onDel}) {
+function Pacientes({pacs, ecMap, navigate, setSelPac, can, onDel}) {
   const [search,   setSearch]   = useState('');
   const [filter,   setFilter]   = useState('Todos');
-  const [filtroEC, setFiltroEC] = useState(''); // estado clínico
+  const [filtroEC, setFiltroEC] = useState('');
 
   const EC_LABELS = {
     inicial:     {lbl:'Estado inicial',     emoji:'🟦', cls:'bb'},
@@ -1007,11 +1019,14 @@ function Pacientes({pacs, navigate, setSelPac, can, onDel}) {
     seguimiento: {lbl:'Estado seguimiento', emoji:'🟩', cls:'bg'},
   };
 
+  // Obtiene el estadoClinico real desde ecMap (HCs en Firebase) con fallback al campo del doc
+  const getEC = p => (ecMap && ecMap[p.id]) || p.estadoClinico || '';
+
   const filtered = pacs.filter(p => {
     const q = search.toLowerCase();
     const matchText   = `${p.nombre} ${p.apellido} ${p.email||''}`.toLowerCase().includes(q);
     const matchEstado = filter==='Todos' || p.estado===filter;
-    const matchEC     = !filtroEC || p.estadoClinico===filtroEC;
+    const matchEC     = !filtroEC || getEC(p) === filtroEC;
     return matchText && matchEstado && matchEC;
   });
 
@@ -1060,7 +1075,7 @@ function Pacientes({pacs, navigate, setSelPac, can, onDel}) {
         e('table',{},
           e('thead',{}, tr_({}, ...['Paciente','Edad','Estado clínico','IMC','DNI / CUIL','Última consulta','Estado',''].map(h=>th_({key:h},h)))),
           e('tbody',{}, ...filtered.map(p => {
-            const ec = EC_LABELS[p.estadoClinico];
+            const ec = EC_LABELS[getEC(p)];
             return tr_({key:p.id},
               td_({}, div({style:{display:'flex',alignItems:'center',gap:10}},
                 div({className:'av'},ini(p.nombre,p.apellido)),
@@ -2701,6 +2716,20 @@ function FormTurno({pacs, consultorios, turnos, onSave, onCancel, onAddPac, init
   const [np, setNp] = useState({nombre:'',apellido:'',email:'',telefono:'',edad:'',sexo:'F',peso:'',talla:'',objetivo:'Perdida de peso',dni:''});
   const [guardandoPac, setGuardandoPac] = useState(false);
 
+  // ── Buscador de paciente ─────────────────────────────────────────────────
+  const [pacSearch,   setPacSearch]   = useState('');
+  const [showDropPac, setShowDropPac] = useState(false);
+  const pacsFiltrados = pacSearch.trim().length > 0
+    ? pacs.filter(p => `${p.nombre} ${p.apellido} ${p.email||''}`.toLowerCase().includes(pacSearch.toLowerCase())).slice(0,8)
+    : pacs.slice(0,8);
+
+  const seleccionarPac = p => {
+    setF({...f, pacienteId:p.id, pacienteNombre:p.nombre+' '+p.apellido});
+    setPacSearch(p.nombre+' '+p.apellido);
+    setShowDropPac(false);
+    if (mostrarNuevoPac) setMostrarNuevoPac(false);
+  };
+
   const campoNp = (k, lbl_, type='text', opts=null) => div({key:k, className:'form-group'},
     lbl({}, lbl_),
     opts ? e('select',{value:np[k], onChange:ev=>setNp({...np,[k]:ev.target.value})},
@@ -2715,6 +2744,7 @@ function FormTurno({pacs, consultorios, turnos, onSave, onCancel, onAddPac, init
       const datos = {...np, imc:imc(np.peso,np.talla), fechaAlta:today(), ultimaConsulta:'', consultas:[], planes:[], estado:'Activo', notas:'', hc:{}};
       const nuevo = await onAddPac(datos);
       setF({...f, pacienteId:nuevo.id, pacienteNombre:np.nombre+' '+np.apellido});
+      setPacSearch(np.nombre+' '+np.apellido);
       setMostrarNuevoPac(false);
       setNp({nombre:'',apellido:'',email:'',telefono:'',edad:'',sexo:'F',peso:'',talla:'',objetivo:'Perdida de peso',dni:''});
       Swal.fire({icon:'success',title:'¡Paciente creado!',text:np.nombre+' '+np.apellido+' fue agregado y seleccionado.',timer:2000,showConfirmButton:false});
@@ -2725,25 +2755,57 @@ function FormTurno({pacs, consultorios, turnos, onSave, onCancel, onAddPac, init
   return Card({children:[
     div({className:'card-header'}, span({className:'card-title'},'Nuevo turno')),
     div({className:'card-body'},
-      // ── Selección de paciente ──────────────────────────────────────────────
+      // ── Selección de paciente con búsqueda ────────────────────────────────
       div({className:'form-group full'}, lbl({},'Paciente'),
         div({style:{display:'flex',gap:8,alignItems:'flex-start',flexWrap:'wrap'}},
-          e('select',{
-            value:f.pacienteId,
-            onChange:ev=>{
-              const p = pacs.find(p=>p.id===ev.target.value);
-              setF({...f, pacienteId:ev.target.value, pacienteNombre:p ? p.nombre+' '+p.apellido : ''});
-              if(mostrarNuevoPac) setMostrarNuevoPac(false);
-            },
-            style:{flex:1,minWidth:200}
-          },
-            e('option',{value:''},'Seleccionar paciente existente...'),
-            ...pacs.map(p=>e('option',{key:p.id,value:p.id}, p.nombre+' '+p.apellido))
+          // Buscador con dropdown
+          div({style:{flex:1,minWidth:220,position:'relative'}},
+            e('input',{
+              type:'text',
+              placeholder:'Escribir nombre para buscar...',
+              value: pacSearch,
+              autoComplete:'off',
+              style:{width:'100%',padding:'10px 14px',border:'1.5px solid #e2e8e0',borderRadius:'var(--radius-sm)',fontFamily:'DM Sans,sans-serif',fontSize:'.875rem',background:'var(--cream)',outline:'none'},
+              onChange: ev => {
+                setPacSearch(ev.target.value);
+                setShowDropPac(true);
+                if (!ev.target.value) setF({...f, pacienteId:'', pacienteNombre:''});
+              },
+              onFocus: () => setShowDropPac(true),
+              onBlur:  () => setTimeout(()=>setShowDropPac(false), 180),
+            }),
+            // Indicador de selección
+            f.pacienteId && span({style:{position:'absolute',right:10,top:'50%',transform:'translateY(-50%)',color:'var(--green-mid)',fontSize:'1rem',pointerEvents:'none'}}, '✓'),
+            // Dropdown
+            showDropPac && div({style:{
+              position:'absolute',top:'calc(100% + 4px)',left:0,right:0,background:'white',
+              border:'1.5px solid var(--green-light)',borderRadius:'var(--radius-sm)',
+              boxShadow:'0 8px 24px rgba(0,0,0,.12)',zIndex:500,maxHeight:220,overflowY:'auto'
+            }},
+              pacsFiltrados.length === 0
+                ? div({style:{padding:'10px 14px',fontSize:'.82rem',color:'var(--text-muted)'}}, 'Sin resultados')
+                : pacsFiltrados.map(p =>
+                    div({key:p.id,
+                      style:{
+                        display:'flex',alignItems:'center',gap:10,padding:'9px 14px',cursor:'pointer',
+                        background: f.pacienteId===p.id ? 'var(--green-mist)' : 'white',
+                        borderBottom:'1px solid var(--cream-dark)'
+                      },
+                      onMouseDown: () => seleccionarPac(p)
+                    },
+                      div({className:'av av-sm'}, ini(p.nombre,p.apellido)),
+                      div({},
+                        div({style:{fontWeight:500,fontSize:'.875rem'}},(p.nombre||'')+' '+(p.apellido||'')),
+                        p.email && div({style:{fontSize:'.72rem',color:'var(--text-muted)'}},p.email)
+                      )
+                    )
+                  )
+            )
           ),
           e('button',{
             type:'button',
             className:'btn btn-secondary btn-sm',
-            onClick:()=>{ setMostrarNuevoPac(!mostrarNuevoPac); setF({...f,pacienteId:'',pacienteNombre:''}); },
+            onClick:()=>{ setMostrarNuevoPac(!mostrarNuevoPac); setF({...f,pacienteId:'',pacienteNombre:''}); setPacSearch(''); },
             style:{whiteSpace:'nowrap',flexShrink:0}
           }, mostrarNuevoPac ? '✕ Cancelar' : '+ Nuevo paciente')
         ),
