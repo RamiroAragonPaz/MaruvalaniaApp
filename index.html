@@ -306,6 +306,25 @@ textarea{resize:vertical;min-height:80px}
 .drive-link-box a:hover{text-decoration:underline}
 .drive-link-edit{display:flex;gap:8px;margin-bottom:14px}
 .drive-link-edit input{flex:1}
+/* ── HC Selector / Multi-HC ──────────────────────────────────────────────── */
+.hc-selector-bar{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;padding:14px 16px;background:var(--cream);border-radius:var(--radius-sm);border:1.5px solid var(--cream-dark)}
+.hc-selector-bar label{font-size:.72rem;font-weight:600;color:var(--text-mid);text-transform:uppercase;letter-spacing:.8px;white-space:nowrap}
+.hc-selector-bar select{flex:1;min-width:200px;max-width:360px}
+.hc-pac-info{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;padding:12px 16px;background:var(--green-mist);border-radius:var(--radius-sm);border:1.5px solid var(--green-pale)}
+.hc-pac-info-item{display:flex;align-items:center;gap:6px;font-size:.82rem;color:var(--text-mid)}
+.hc-pac-info-item strong{color:var(--text-dark);font-weight:700}
+.hc-export-btn{background:#1d4ed8;color:white}
+.hc-export-btn:hover{background:#1e3a8a}
+.hc-new-modal-overlay{position:fixed;inset:0;background:rgba(26,58,42,.45);backdrop-filter:blur(4px);z-index:300;display:flex;align-items:center;justify-content:center;padding:20px;animation:fadeIn .2s ease}
+.hc-new-modal{background:var(--white);border-radius:var(--radius);width:100%;max-width:480px;box-shadow:var(--shadow-lg);animation:slideUp .25s ease;overflow:hidden}
+.hc-new-modal .modal-header{padding:22px 28px 16px;border-bottom:1px solid var(--cream-dark);display:flex;align-items:center;justify-content:space-between}
+.hc-new-modal .modal-body{padding:24px 28px}
+.hc-new-modal .modal-footer{padding:16px 28px;border-top:1px solid var(--cream-dark);display:flex;justify-content:flex-end;gap:10px}
+.hc-opcion{display:flex;flex-direction:column;gap:4px;padding:14px 16px;border-radius:var(--radius-sm);border:2px solid #e2e8e0;cursor:pointer;transition:all .18s;background:white;margin-bottom:10px}
+.hc-opcion:hover{border-color:var(--green-light);background:var(--green-mist)}
+.hc-opcion.selected{border-color:var(--green-mid);background:var(--green-mist)}
+.hc-opcion-titulo{font-weight:600;font-size:.9rem;color:var(--text-dark)}
+.hc-opcion-desc{font-size:.78rem;color:var(--text-muted);line-height:1.4}
 /* ── Finanzas por consultorio ────────────────────────────────────────────── */
 .cons-fin-table td,.cons-fin-table th{padding:10px 12px;border-bottom:1px solid var(--cream-dark);font-size:.82rem}
 .cons-fin-table th{background:var(--cream);font-weight:600;color:var(--text-mid)}
@@ -950,6 +969,101 @@ function Pacientes({pacs, navigate, setSelPac, can, onDel}) {
   );
 }
 
+// ─── EXPORT HC A WORD (usando HTML → Blob) ───────────────────────────────────
+function exportarHCWord(pac, hc) {
+  const fecha = hc.fechaConsulta || today();
+  const imcVal = pac.talla > 0 ? (pac.peso / ((pac.talla/100)**2)).toFixed(1) : '-';
+
+  const FAF_LABELS = {'1.2':'1.2 — Sedentario','1.375':'1.375 — Ligera','1.55':'1.55 — Moderada','1.725':'1.725 — Intensa','1.9':'1.9 — Muy intensa'};
+
+  let vctHtml = '';
+  if (pac.peso && pac.talla && pac.edad && hc.faf) {
+    const sexo = (pac.sexo||'F').toUpperCase();
+    const tmb = sexo==='M'
+      ? 66.5+(13.75*Number(pac.peso))+(5.003*Number(pac.talla))-(6.775*Number(pac.edad))
+      : 655.1+(9.563*Number(pac.peso))+(1.850*Number(pac.talla))-(4.676*Number(pac.edad));
+    const vct = Math.round(tmb * Number(hc.faf));
+    vctHtml = `<p><strong>TMB:</strong> ${Math.round(tmb)} kcal/día &nbsp;|&nbsp; <strong>FAF:</strong> ${hc.faf} &nbsp;|&nbsp; <strong>VCT:</strong> ${vct} kcal/día</p>`;
+  }
+
+  const html = `
+<!DOCTYPE html><html><head><meta charset="UTF-8">
+<style>
+  body{font-family:Calibri,Arial,sans-serif;font-size:11pt;margin:2cm}
+  h1{color:#1a3a2a;font-size:16pt;border-bottom:2px solid #52b788;padding-bottom:6px;margin-bottom:4px}
+  h2{color:#2d6a4f;font-size:12pt;margin-top:18px;margin-bottom:4px;border-bottom:1px solid #b7e4c7;padding-bottom:3px}
+  .info-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px 16px;margin-bottom:14px;background:#f0faf4;padding:10px;border-radius:4px}
+  .info-item label{font-size:9pt;color:#7a9b7c;text-transform:uppercase;display:block}
+  .info-item span{font-weight:600;font-size:11pt}
+  p{margin:4px 0;line-height:1.5}
+  .hab{margin:2px 0}
+  table{border-collapse:collapse;width:100%}
+  td,th{border:1px solid #ddd;padding:5px 8px;font-size:10pt}
+  th{background:#d8f3dc;color:#1a3a2a;font-weight:600}
+  .footer{margin-top:30px;font-size:9pt;color:#aaa;border-top:1px solid #eee;padding-top:8px}
+</style>
+</head><body>
+<h1>Historia Clínica Nutricional</h1>
+<div class="info-grid">
+  <div class="info-item"><label>Paciente</label><span>${pac.nombre||''} ${pac.apellido||''}</span></div>
+  <div class="info-item"><label>Fecha de consulta</label><span>${fecha}</span></div>
+  <div class="info-item"><label>DNI / CUIL</label><span>${pac.dni||'-'}</span></div>
+  <div class="info-item"><label>Email</label><span>${pac.email||'-'}</span></div>
+  <div class="info-item"><label>Peso</label><span>${pac.peso||'-'} kg</span></div>
+  <div class="info-item"><label>Talla</label><span>${pac.talla||'-'} cm</span></div>
+  <div class="info-item"><label>IMC</label><span>${imcVal}</span></div>
+  <div class="info-item"><label>Sexo</label><span>${pac.sexo||'-'}</span></div>
+  <div class="info-item"><label>Edad</label><span>${pac.edad||'-'} años</span></div>
+  <div class="info-item"><label>Teléfono</label><span>${pac.telefono||'-'}</span></div>
+</div>
+
+<h2>📊 Estado clínico</h2>
+<p>${{inicial:'Estado inicial',evaluacion:'Estado de evaluación',seguimiento:'Estado de seguimiento'}[hc.estadoClinico]||'-'}</p>
+
+<h2>🎯 Objetivo</h2>
+<p>${(hc.objetivo||pac.objetivo||'-').replace(/\n/g,'<br>')}</p>
+
+<h2>🍽️ A — Alimentación habitual</h2>
+<p>${(hc.comidas||'-').replace(/\n/g,'<br>')}</p>
+
+<h2>🏃 B — Actividad física</h2>
+<p>${(hc.actFisica||'-').replace(/\n/g,'<br>')}</p>
+${hc.faf?`<p><strong>FAF:</strong> ${FAF_LABELS[hc.faf]||hc.faf}</p>`:''}
+${vctHtml}
+
+<h2>🚫 C — Alimentos que rechaza</h2>
+<p>${(hc.alimentosRechaza||'-').replace(/\n/g,'<br>')}</p>
+
+<h2>💊 D — Hábitos</h2>
+<p class="hab">${hc.fumar?'✔ Tabaquismo'+(hc.fumarDetalle?' — '+hc.fumarDetalle:''):'✗ Sin tabaquismo'}</p>
+<p class="hab">${hc.alcohol?'✔ Alcohol'+(hc.alcoholDetalle?' — '+hc.alcoholDetalle:''):'✗ Sin consumo de alcohol'}</p>
+<p class="hab">${hc.sal?'✔ Exceso de sal'+(hc.salDetalle?' — '+hc.salDetalle:''):'✗ Sin exceso de sal'}</p>
+
+<h2>🩺 E — Síntomas y patologías</h2>
+<p>${(hc.sintomasPatologias||'-').replace(/\n/g,'<br>')}</p>
+
+<h2>💉 F — Medicación</h2>
+<p>${(hc.medicacion||'-').replace(/\n/g,'<br>')}</p>
+
+<h2>🔬 G — Datos de laboratorio</h2>
+<table>
+<tr><th>Parámetro</th><th>Valor</th></tr>
+${[['Glucemia','glucemia'],['Colesterol total','colesterolTotal'],['HDL','hdl'],['LDL','ldl'],['Triglicéridos','trigliceridos'],['Hemoglobina','hemoglobina'],['Ferritina','ferritina'],['Vitamina D','vitamD'],['TSH','tsh'],['Urea','urea'],['Creatinina','creatinina']].map(([n,k])=>`<tr><td>${n}</td><td>${(hc.lab||{})[k]||'-'}</td></tr>`).join('')}
+${(hc.lab||{}).otrosLab?`<tr><td colspan="2"><strong>Otros:</strong> ${((hc.lab||{}).otrosLab||'').replace(/\n/g,'<br>')}</td></tr>`:''}
+</table>
+
+<div class="footer">Generado por MaruApp · ${new Date().toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric'})} · Historia del ${fecha}</div>
+</body></html>`;
+
+  const blob = new Blob([html], {type:'application/msword'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `HC_${(pac.nombre||'').replace(/ /g,'_')}_${(pac.apellido||'').replace(/ /g,'_')}_${fecha}.doc`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ─── PACIENTE DETALLE ─────────────────────────────────────────────────────────
 function PacienteDetalle({pac, navigate, setSelPac, can, showToast, onUpdate, initialTab='info'}) {
   const [tab,    setTab]    = useState(initialTab||'info');
@@ -960,17 +1074,75 @@ function PacienteDetalle({pac, navigate, setSelPac, can, showToast, onUpdate, in
   const [nc,     setNc]     = useState({fecha:today(),nota:'',peso:''});
   const [np,     setNp]     = useState({nombre:'',tipo:'',fecha:today(),driveUrl:''});
   const [saving, setSaving] = useState(false);
-  // Historia Clínica — estado local que se guarda en pac.hc
+
+  // ── Multi-HC: lista de historias clínicas del paciente ───────────────────
   const HC_INIT = {
+    fechaConsulta: today(),
     estadoClinico:'',
+    objetivo:'',
     comidas:'', actFisica:'', faf:'', alimentosRechaza:'',
     fumar:false, fumarDetalle:'', alcohol:false, alcoholDetalle:'', sal:false, salDetalle:'',
     sintomasPatologias:'', medicacion:'',
     lab:{ glucemia:'', colesterolTotal:'', hdl:'', ldl:'', trigliceridos:'', hemoglobina:'', ferritina:'', vitamD:'', tsh:'', urea:'', creatinina:'', otrosLab:'' }
   };
-  const [hc,     setHc]     = useState({...HC_INIT, ...(pac.hc||{})});
-  const [hcEdit, setHcEdit] = useState(false);
-  const [hcSaving,setHcSaving] = useState(false);
+
+  const [historias,     setHistorias]     = useState([]);
+  const [hcSelId,       setHcSelId]       = useState(null); // id de la HC seleccionada
+  const [hc,            setHc]            = useState({...HC_INIT});
+  const [hcEdit,        setHcEdit]        = useState(false);
+  const [hcSaving,      setHcSaving]      = useState(false);
+  const [showNuevaHC,   setShowNuevaHC]   = useState(false); // modal de nueva HC
+  const [opcionNuevaHC, setOpcionNuevaHC] = useState('nueva'); // 'nueva' | 'copia'
+
+  // Cargar colección historias_clinicas del paciente
+  useEffect(() => {
+    if (!pac?.id) return;
+    const q = query(collection(db, 'pacientes', pac.id, 'historias_clinicas'), orderBy('fechaConsulta','desc'));
+    const unsub = onSnapshot(q, snap => {
+      const docs = snap.docs.map(d => ({id:d.id,...d.data()}));
+      setHistorias(docs);
+      // Si no hay HC seleccionada y hay docs, seleccionar la más reciente
+      if (docs.length > 0 && !hcSelId) {
+        setHcSelId(docs[0].id);
+        setHc({...HC_INIT, ...docs[0]});
+      }
+    }, err => console.warn('HC listener:', err));
+    return () => unsub();
+  }, [pac.id]);
+
+  // Cuando cambia la HC seleccionada, actualizar el estado local
+  const seleccionarHC = (id) => {
+    const found = historias.find(h => h.id === id);
+    if (found) { setHcSelId(id); setHc({...HC_INIT, ...found}); setHcEdit(false); }
+  };
+
+  // Crear nueva HC
+  const crearNuevaHC = async () => {
+    let nuevaData = {...HC_INIT, fechaConsulta: today()};
+    if (opcionNuevaHC === 'copia' && historias.length > 0) {
+      const ultima = historias[0];
+      const { id:_id, fechaConsulta:_fc, creadoEn:_ce, ...rest } = ultima;
+      nuevaData = {...HC_INIT, ...rest, fechaConsulta: today()};
+    }
+    const ref = await addDoc(collection(db,'pacientes',pac.id,'historias_clinicas'), {...nuevaData, creadoEn:serverTimestamp()});
+    setHcSelId(ref.id);
+    setHc({...nuevaData, id:ref.id});
+    setHcEdit(true);
+    setShowNuevaHC(false);
+    showToast('Nueva historia clínica creada');
+  };
+
+  const saveHC = async () => {
+    setHcSaving(true);
+    const { id: hcId, ...datos } = hc;
+    if (hcSelId) {
+      await updateDoc(doc(db,'pacientes',pac.id,'historias_clinicas',hcSelId), {...datos, actualizadoEn:serverTimestamp()});
+    } else {
+      const ref = await addDoc(collection(db,'pacientes',pac.id,'historias_clinicas'), {...datos, creadoEn:serverTimestamp()});
+      setHcSelId(ref.id);
+    }
+    setHcEdit(false); setHcSaving(false); showToast('Historia clínica guardada');
+  };
 
 
 
@@ -1018,11 +1190,6 @@ function PacienteDetalle({pac, navigate, setSelPac, can, showToast, onUpdate, in
   };
   const saveNotas = async () => {
     await onUpdate(pac.id, {notas:form.notas}); setSelPac({...pac,notas:form.notas}); setEdit(false); showToast('Notas guardadas');
-  };
-  const saveHC = async () => {
-    setHcSaving(true);
-    await onUpdate(pac.id, {hc});
-    setSelPac({...pac, hc}); setHcEdit(false); setHcSaving(false); showToast('Historia clínica guardada');
   };
 
   const field = (k,lbl_) => div({key:k,className:'form-group'},
@@ -1096,160 +1263,248 @@ function PacienteDetalle({pac, navigate, setSelPac, can, showToast, onUpdate, in
 
     // ── TAB: Información ────────────────────────────────────────────────────
     tab==='info' && Card({children:[div({className:'card-body'}, div({className:'form-grid'},
-      ...['nombre','apellido','email','telefono','edad','dni','peso','talla','objetivo','sexo'].map((k,i) =>
-        field(k, ['Nombre','Apellido','Email','Teléfono','Edad','DNI / CUIL','Peso (kg)','Talla (cm)','Objetivo','Sexo'][i])
+      ...['nombre','apellido','email','telefono','edad','dni','peso','talla','sexo'].map((k,i) =>
+        field(k, ['Nombre','Apellido','Email','Teléfono','Edad','DNI / CUIL','Peso (kg)','Talla (cm)','Sexo'][i])
+      ),
+      div({className:'form-group full'},
+        lbl({}, 'Objetivo'),
+        edit&&can('editPac')
+          ? e('textarea',{rows:3,value:form.objetivo||'',onChange:ev=>setForm({...form,objetivo:ev.target.value}),style:{width:'100%'}})
+          : div({style:{padding:'10px 14px',background:'var(--cream)',borderRadius:'var(--radius-sm)',fontSize:'.875rem',whiteSpace:'pre-wrap',minHeight:42}}, pac.objetivo||'-')
       )
     ))]}),
 
     // ── TAB: Historia Clínica ────────────────────────────────────────────────
     tab==='hc' && div({},
-      !hcEdit && !pac.hc && div({style:{marginBottom:12,padding:'10px 14px',background:'var(--green-mist)',borderRadius:'var(--radius-sm)',fontSize:'.82rem',color:'var(--text-mid)'}},'📋 Todavía no se cargó la historia clínica. Hacé clic en "Editar HC" para completarla.'),
 
-      // Botón Editar / Cancelar al inicio de la HC
-      can('editPac') && div({style:{display:'flex',gap:8,marginBottom:14}},
-        !hcEdit && Btn({sm:true,onClick:()=>setHcEdit(true)}, '✏️ Editar HC'),
-        hcEdit && Btn({cls:'btn-secondary',sm:true,onClick:()=>{ setHc({...HC_INIT,...(pac.hc||{})}); setHcEdit(false); }}, 'Cancelar')
-      ),
-
-      // Estado clínico del paciente
-      HCSec({icono:'📊', titulo:'Estado clínico actual', children:[
-        hc.estadoClinico && !hcEdit && div({style:{marginBottom:10}},
-          span({className:'ec-badge '+hc.estadoClinico},
-            {inicial:'🟦 Estado inicial', evaluacion:'🟨 Estado de evaluación', seguimiento:'🟩 Estado de seguimiento'}[hc.estadoClinico] || hc.estadoClinico
-          )
-        ),
-        div({className:'estado-clinico-selector'},
-          ...[
-            {val:'inicial',     icono:'🟦', lbl:'Estado inicial',       desc:'Ya tuvo su primera consulta y se le envió el plan alimentario'},
-            {val:'evaluacion',  icono:'🟨', lbl:'Estado de evaluación',  desc:'Se entrega el registro alimentario para que el paciente complete'},
-            {val:'seguimiento', icono:'🟩', lbl:'Estado de seguimiento', desc:'Se entregan recetarios y organizador saludable — queda en seguimiento'},
-          ].map(op => div({
-            key:op.val,
-            className:'estado-clinico-opt'+(hc.estadoClinico===op.val?' selected':''),
-            style:{cursor:hcEdit?'pointer':'default',opacity:!hcEdit&&hc.estadoClinico&&hc.estadoClinico!==op.val?0.4:1},
-            onClick:()=>{ if(hcEdit) setHc({...hc,estadoClinico:op.val}); }
-          },
-            e('input',{type:'radio', name:'estadoClinico', checked:hc.estadoClinico===op.val, readOnly:true, style:{pointerEvents:'none'}}),
-            div({},
-              div({className:'ec-label'}, op.icono+' '+op.lbl),
-              div({className:'ec-desc'}, op.desc)
-            )
-          ))
-        )
-      ]}),
-      HCSec({icono:'🍽️', titulo:'A — Alimentación habitual', children:[
-        hcTA('comidas', 'Comidas y horarios que realiza normalmente', 4)
-      ]}),
-
-      // B — Actividad física + FAF
-      HCSec({icono:'🏃', titulo:'B — Actividad física', children:[
-        hcTA('actFisica', 'Descripción de la actividad física (tipo, frecuencia, duración)', 2),
-        div({className:'hc-campo'},
-          e('label',{}, 'Factor de Actividad Física (FAF) — para ecuación VCT'),
-          div({className:'faf-options'},
-            ...FAF_OPCIONES.map(op =>
-              div({key:op.val,
-                className:'faf-opt'+(hc.faf===op.val?' selected':''),
-                onClick:()=>{ if(hcEdit) setHc({...hc,faf:op.val}); },
-                style:{cursor:hcEdit?'pointer':'default',opacity:(!hcEdit&&hc.faf&&hc.faf!==op.val)?0.4:1}
+      // Modal Nueva HC
+      showNuevaHC && div({className:'hc-new-modal-overlay'},
+        div({className:'hc-new-modal'},
+          div({className:'modal-header'},
+            e('h3',{}, '📋 Nueva historia clínica'),
+            Btn({cls:'btn-ghost',onClick:()=>setShowNuevaHC(false)}, '✕')
+          ),
+          div({className:'modal-body'},
+            div({className:'hc-campo'},
+              e('label',{}, 'Fecha de consulta'),
+              e('input',{type:'date', value:opcionNuevaHC==='nueva'?today():today(), style:{width:'100%',padding:'10px 12px',border:'1.5px solid #e2e8e0',borderRadius:'var(--radius-sm)',fontFamily:'DM Sans,sans-serif',fontSize:'.875rem',outline:'none'}, readOnly:true})
+            ),
+            div({style:{marginTop:14}},
+              e('label',{style:{fontSize:'.72rem',fontWeight:600,color:'var(--text-mid)',textTransform:'uppercase',letterSpacing:'.8px',display:'block',marginBottom:8}}, 'Tipo de nueva historia'),
+              div({
+                className:'hc-opcion'+(opcionNuevaHC==='nueva'?' selected':''),
+                onClick:()=>setOpcionNuevaHC('nueva')
               },
-                e('span',{style:{fontWeight:600}}, op.val),
-                e('span',{style:{fontSize:'.72rem',marginLeft:4,color:hc.faf===op.val?'rgba(255,255,255,.85)':'var(--text-muted)'}}, op.lbl.split(' — ')[1]),
-                e('br',{}),
-                e('span',{style:{fontSize:'.68rem',color:hc.faf===op.val?'rgba(255,255,255,.7)':'var(--text-muted)'}}, op.desc)
+                div({className:'hc-opcion-titulo'}, '🆕 Comenzar desde cero'),
+                div({className:'hc-opcion-desc'}, 'Se crea una historia clínica completamente vacía para esta consulta.')
+              ),
+              historias.length > 0 && div({
+                className:'hc-opcion'+(opcionNuevaHC==='copia'?' selected':''),
+                onClick:()=>setOpcionNuevaHC('copia')
+              },
+                div({className:'hc-opcion-titulo'}, '📄 Copiar de la última historia'),
+                div({className:'hc-opcion-desc'}, 'Se copiará la información de la HC más reciente ('+historias[0].fechaConsulta+') para que puedas actualizar solo los cambios.')
               )
             )
           ),
-          hc.faf && div({style:{marginTop:8,fontSize:'.78rem',color:'var(--green-mid)',fontWeight:600}},
-            'FAF seleccionado: '+hc.faf+' — '+((FAF_OPCIONES.find(o=>o.val===hc.faf)||{}).lbl||'')
+          div({className:'modal-footer'},
+            Btn({cls:'btn-secondary', onClick:()=>setShowNuevaHC(false)}, 'Cancelar'),
+            Btn({onClick:crearNuevaHC}, '✓ Crear historia clínica')
+          )
+        )
+      ),
+
+      // Barra selector de HCs
+      div({className:'hc-selector-bar'},
+        e('label',{}, '📋 Historia clínica:'),
+        e('select',{
+          value: hcSelId||'',
+          onChange: ev => seleccionarHC(ev.target.value),
+          style:{flex:1,minWidth:180,maxWidth:360,padding:'9px 12px',border:'1.5px solid #e2e8e0',borderRadius:'var(--radius-sm)',fontFamily:'DM Sans,sans-serif',fontSize:'.875rem',background:'white',outline:'none'}
+        },
+          historias.length === 0 && e('option',{value:''},'Sin historias clínicas — creá la primera'),
+          ...historias.map(h_ =>
+            e('option',{key:h_.id, value:h_.id}, h_.fechaConsulta + (h_.estadoClinico ? ' — '+({inicial:'Inicial',evaluacion:'Evaluación',seguimiento:'Seguimiento'}[h_.estadoClinico]||h_.estadoClinico) : ''))
           )
         ),
-        // VCT calculado automáticamente
-        (() => {
-          const res = calcVCT();
-          if (!res) return div({style:{marginTop:10,padding:'10px 14px',background:'var(--cream)',borderRadius:'var(--radius-sm)',fontSize:'.8rem',color:'var(--text-muted)'}},
-            '💡 Para calcular el VCT completá: peso, talla, edad y sexo en la ficha del paciente + seleccioná el FAF arriba.'
-          );
-          return div({style:{marginTop:12,padding:'14px 16px',background:'var(--green-mist)',borderRadius:'var(--radius-sm)',border:'1.5px solid var(--green-light)'}},
-            div({style:{fontSize:'.72rem',fontWeight:700,color:'var(--text-mid)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:8}},
-              '🔥 Cálculo VCT — Harris-Benedict'
-            ),
-            div({style:{display:'flex',gap:20,flexWrap:'wrap',alignItems:'baseline'}},
+        can('editPac') && Btn({sm:true,onClick:()=>setShowNuevaHC(true)}, '+ Nueva HC'),
+        historias.length > 0 && Btn({cls:'btn-secondary hc-export-btn',sm:true,onClick:()=>exportarHCWord(pac,hc)}, '📄 Exportar Word')
+      ),
+
+      // Info de peso / talla / sexo del paciente
+      div({className:'hc-pac-info'},
+        div({className:'hc-pac-info-item'}, span({},  '⚖️'), e('strong',{},pac.peso ? pac.peso+' kg' : '-'), span({style:{marginLeft:4,color:'var(--text-muted)'}},'Peso')),
+        div({className:'hc-pac-info-item'}, span({},'📏'), e('strong',{},pac.talla ? pac.talla+' cm' : '-'), span({style:{marginLeft:4,color:'var(--text-muted)'}},'Talla')),
+        div({className:'hc-pac-info-item'}, span({},'🧬'), e('strong',{},pac.sexo||'-'), span({style:{marginLeft:4,color:'var(--text-muted)'}},'Sexo')),
+        div({className:'hc-pac-info-item'}, span({},'📊'), e('strong',{},imc(pac.peso,pac.talla)), span({style:{marginLeft:4,color:'var(--text-muted)'}},'IMC'))
+      ),
+
+      historias.length === 0 && div({style:{marginBottom:12,padding:'10px 14px',background:'var(--green-mist)',borderRadius:'var(--radius-sm)',fontSize:'.82rem',color:'var(--text-mid)'}},'📋 Todavía no se cargó ninguna historia clínica. Hacé clic en "+ Nueva HC" para comenzar.'),
+
+      historias.length > 0 && div({},
+
+        // Botón Editar / Cancelar al inicio de la HC
+        can('editPac') && div({style:{display:'flex',gap:8,marginBottom:14}},
+          !hcEdit && Btn({sm:true,onClick:()=>setHcEdit(true)}, '✏️ Editar HC'),
+          hcEdit && Btn({cls:'btn-secondary',sm:true,onClick:()=>{ seleccionarHC(hcSelId); }}, 'Cancelar')
+        ),
+
+        // Fecha de consulta
+        div({style:{marginBottom:16,padding:'12px 16px',background:'white',border:'1.5px solid var(--cream-dark)',borderRadius:'var(--radius-sm)',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}},
+          e('label',{style:{fontSize:'.72rem',fontWeight:600,color:'var(--text-mid)',textTransform:'uppercase',letterSpacing:'.8px',whiteSpace:'nowrap'}}, '📅 Fecha de consulta'),
+          hcEdit
+            ? e('input',{type:'date',value:hc.fechaConsulta||today(),onChange:ev=>setHc({...hc,fechaConsulta:ev.target.value}),style:{padding:'8px 12px',border:'1.5px solid #e2e8e0',borderRadius:'var(--radius-sm)',fontFamily:'DM Sans,sans-serif',fontSize:'.875rem',outline:'none',background:'white'}})
+            : span({style:{fontWeight:600,fontSize:'.9rem',color:'var(--text-dark)'}}, hc.fechaConsulta||'-')
+        ),
+
+        // Estado clínico del paciente
+        HCSec({icono:'📊', titulo:'Estado clínico actual', children:[
+          hc.estadoClinico && !hcEdit && div({style:{marginBottom:10}},
+            span({className:'ec-badge '+hc.estadoClinico},
+              {inicial:'🟦 Estado inicial', evaluacion:'🟨 Estado de evaluación', seguimiento:'🟩 Estado de seguimiento'}[hc.estadoClinico] || hc.estadoClinico
+            )
+          ),
+          div({className:'estado-clinico-selector'},
+            ...[
+              {val:'inicial',     icono:'🟦', lbl:'Estado inicial',       desc:'Ya tuvo su primera consulta y se le envió el plan alimentario'},
+              {val:'evaluacion',  icono:'🟨', lbl:'Estado de evaluación',  desc:'Se entrega el registro alimentario para que el paciente complete'},
+              {val:'seguimiento', icono:'🟩', lbl:'Estado de seguimiento', desc:'Se entregan recetarios y organizador saludable — queda en seguimiento'},
+            ].map(op => div({
+              key:op.val,
+              className:'estado-clinico-opt'+(hc.estadoClinico===op.val?' selected':''),
+              style:{cursor:hcEdit?'pointer':'default',opacity:!hcEdit&&hc.estadoClinico&&hc.estadoClinico!==op.val?0.4:1},
+              onClick:()=>{ if(hcEdit) setHc({...hc,estadoClinico:op.val}); }
+            },
+              e('input',{type:'radio', name:'estadoClinico', checked:hc.estadoClinico===op.val, readOnly:true, style:{pointerEvents:'none'}}),
               div({},
-                div({style:{fontSize:'.75rem',color:'var(--text-muted)'}},'Tasa Metabólica Basal (TMB)'),
-                div({style:{fontSize:'1.3rem',fontWeight:700,color:'var(--text-dark)'}}, res.tmb+' kcal/día')
-              ),
-              div({style:{fontSize:'1.5rem',color:'var(--green-light)'}},'×'),
-              div({},
-                div({style:{fontSize:'.75rem',color:'var(--text-muted)'}},'Factor de actividad (FAF)'),
-                div({style:{fontSize:'1.3rem',fontWeight:700,color:'var(--text-dark)'}}, hc.faf)
-              ),
-              div({style:{fontSize:'1.5rem',color:'var(--green-light)'}}, '='),
-              div({style:{background:'white',borderRadius:'var(--radius-sm)',padding:'8px 16px',border:'2px solid var(--green-mid)'}},
-                div({style:{fontSize:'.75rem',color:'var(--text-muted)'}},'VCT estimado'),
-                div({style:{fontSize:'1.5rem',fontWeight:800,color:'var(--green-mid)'}}, res.vct+' kcal/día')
+                div({className:'ec-label'}, op.icono+' '+op.lbl),
+                div({className:'ec-desc'}, op.desc)
+              )
+            ))
+          )
+        ]}),
+
+        // Objetivo (textarea libre)
+        HCSec({icono:'🎯', titulo:'Objetivo de la consulta', children:[
+          div({className:'hc-campo'},
+            e('label',{}, 'Objetivo nutricional de esta consulta'),
+            e('textarea',{rows:3, readOnly:!hcEdit, value:hc.objetivo||'', onChange:ev=>setHc({...hc,objetivo:ev.target.value}), placeholder:hcEdit?'Describí el objetivo nutricional para este paciente en esta consulta...':''})
+          )
+        ]}),
+
+        HCSec({icono:'🍽️', titulo:'A — Alimentación habitual', children:[
+          hcTA('comidas', 'Comidas y horarios que realiza normalmente', 4)
+        ]}),
+
+        // B — Actividad física + FAF
+        HCSec({icono:'🏃', titulo:'B — Actividad física', children:[
+          hcTA('actFisica', 'Descripción de la actividad física (tipo, frecuencia, duración)', 2),
+          div({className:'hc-campo'},
+            e('label',{}, 'Factor de Actividad Física (FAF) — para ecuación VCT'),
+            div({className:'faf-options'},
+              ...FAF_OPCIONES.map(op =>
+                div({key:op.val,
+                  className:'faf-opt'+(hc.faf===op.val?' selected':''),
+                  onClick:()=>{ if(hcEdit) setHc({...hc,faf:op.val}); },
+                  style:{cursor:hcEdit?'pointer':'default',opacity:(!hcEdit&&hc.faf&&hc.faf!==op.val)?0.4:1}
+                },
+                  e('span',{style:{fontWeight:600}}, op.val),
+                  e('span',{style:{fontSize:'.72rem',marginLeft:4,color:hc.faf===op.val?'rgba(255,255,255,.85)':'var(--text-muted)'}}, op.lbl.split(' — ')[1]),
+                  e('br',{}),
+                  e('span',{style:{fontSize:'.68rem',color:hc.faf===op.val?'rgba(255,255,255,.7)':'var(--text-muted)'}}, op.desc)
+                )
               )
             ),
-            div({style:{fontSize:'.68rem',color:'var(--text-muted)',marginTop:8}},
-              'Fórmula: Harris-Benedict ('+((pac.sexo||'F').toUpperCase()==='M'?'Hombre':'Mujer')+') · Peso: '+(pac.peso||'-')+' kg · Talla: '+(pac.talla||'-')+' cm · Edad: '+(pac.edad||'-')+' años'
+            hc.faf && div({style:{marginTop:8,fontSize:'.78rem',color:'var(--green-mid)',fontWeight:600}},
+              'FAF seleccionado: '+hc.faf+' — '+((FAF_OPCIONES.find(o=>o.val===hc.faf)||{}).lbl||'')
             )
-          );
-        })()
-      ]}),
+          ),
+          // VCT calculado automáticamente
+          (() => {
+            const res = calcVCT();
+            if (!res) return div({style:{marginTop:10,padding:'10px 14px',background:'var(--cream)',borderRadius:'var(--radius-sm)',fontSize:'.8rem',color:'var(--text-muted)'}},
+              '💡 Para calcular el VCT completá: peso, talla, edad y sexo en la ficha del paciente + seleccioná el FAF arriba.'
+            );
+            return div({style:{marginTop:12,padding:'14px 16px',background:'var(--green-mist)',borderRadius:'var(--radius-sm)',border:'1.5px solid var(--green-light)'}},
+              div({style:{fontSize:'.72rem',fontWeight:700,color:'var(--text-mid)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:8}},
+                '🔥 Cálculo VCT — Harris-Benedict'
+              ),
+              div({style:{display:'flex',gap:20,flexWrap:'wrap',alignItems:'baseline'}},
+                div({},
+                  div({style:{fontSize:'.75rem',color:'var(--text-muted)'}},'Tasa Metabólica Basal (TMB)'),
+                  div({style:{fontSize:'1.3rem',fontWeight:700,color:'var(--text-dark)'}}, res.tmb+' kcal/día')
+                ),
+                div({style:{fontSize:'1.5rem',color:'var(--green-light)'}},'×'),
+                div({},
+                  div({style:{fontSize:'.75rem',color:'var(--text-muted)'}},'Factor de actividad (FAF)'),
+                  div({style:{fontSize:'1.3rem',fontWeight:700,color:'var(--text-dark)'}}, hc.faf)
+                ),
+                div({style:{fontSize:'1.5rem',color:'var(--green-light)'}}, '='),
+                div({style:{background:'white',borderRadius:'var(--radius-sm)',padding:'8px 16px',border:'2px solid var(--green-mid)'}},
+                  div({style:{fontSize:'.75rem',color:'var(--text-muted)'}},'VCT estimado'),
+                  div({style:{fontSize:'1.5rem',fontWeight:800,color:'var(--green-mid)'}}, res.vct+' kcal/día')
+                )
+              ),
+              div({style:{fontSize:'.68rem',color:'var(--text-muted)',marginTop:8}},
+                'Fórmula: Harris-Benedict ('+((pac.sexo||'F').toUpperCase()==='M'?'Hombre':'Mujer')+') · Peso: '+(pac.peso||'-')+' kg · Talla: '+(pac.talla||'-')+' cm · Edad: '+(pac.edad||'-')+' años'
+              )
+            );
+          })()
+        ]}),
 
-      // C — Alimentos que rechaza
-      HCSec({icono:'🚫', titulo:'C — Alimentos que rechaza', children:[
-        hcTA('alimentosRechaza', 'Alimentos que rechaza, alergias o intolerancias', 2)
-      ]}),
+        // C — Alimentos que rechaza
+        HCSec({icono:'🚫', titulo:'C — Alimentos que rechaza', children:[
+          hcTA('alimentosRechaza', 'Alimentos que rechaza, alergias o intolerancias', 2)
+        ]}),
 
-      // D — Hábitos
-      HCSec({icono:'💊', titulo:'D — Hábitos', children:[
-        div({className:'hc-campo'},
-          e('label',{}, 'Hábitos (marcar y detallar)'),
-          hcHABITO('fumar',   'fumarDetalle',   'Tabaquismo'),
-          hcHABITO('alcohol', 'alcoholDetalle', 'Consumo de alcohol'),
-          hcHABITO('sal',     'salDetalle',     'Exceso de sal')
-        )
-      ]}),
+        // D — Hábitos
+        HCSec({icono:'💊', titulo:'D — Hábitos', children:[
+          div({className:'hc-campo'},
+            e('label',{}, 'Hábitos (marcar y detallar)'),
+            hcHABITO('fumar',   'fumarDetalle',   'Tabaquismo'),
+            hcHABITO('alcohol', 'alcoholDetalle', 'Consumo de alcohol'),
+            hcHABITO('sal',     'salDetalle',     'Exceso de sal')
+          )
+        ]}),
 
-      // E — Síntomas y patologías
-      HCSec({icono:'🩺', titulo:'E — Síntomas y patologías', children:[
-        hcTA('sintomasPatologias', 'Síntomas actuales, diagnósticos y patologías de base', 4)
-      ]}),
+        // E — Síntomas y patologías
+        HCSec({icono:'🩺', titulo:'E — Síntomas y patologías', children:[
+          hcTA('sintomasPatologias', 'Síntomas actuales, diagnósticos y patologías de base', 4)
+        ]}),
 
-      // F — Medicación
-      HCSec({icono:'💉', titulo:'F — Medicación', children:[
-        hcTA('medicacion', 'Medicamentos actuales (nombre, dosis, frecuencia)', 3)
-      ]}),
+        // F — Medicación
+        HCSec({icono:'💉', titulo:'F — Medicación', children:[
+          hcTA('medicacion', 'Medicamentos actuales (nombre, dosis, frecuencia)', 3)
+        ]}),
 
-      // G — Laboratorio
-      HCSec({icono:'🔬', titulo:'G — Datos de laboratorio', children:[
-        div({className:'lab-grid'},
-          hcLAB('glucemia',      'Glucemia (mg/dL)'),
-          hcLAB('colesterolTotal','Colesterol total (mg/dL)'),
-          hcLAB('hdl',           'HDL (mg/dL)'),
-          hcLAB('ldl',           'LDL (mg/dL)'),
-          hcLAB('trigliceridos', 'Triglicéridos (mg/dL)'),
-          hcLAB('hemoglobina',   'Hemoglobina (g/dL)'),
-          hcLAB('ferritina',     'Ferritina (ng/mL)'),
-          hcLAB('vitamD',        'Vitamina D (ng/mL)'),
-          hcLAB('tsh',           'TSH (mUI/L)'),
-          hcLAB('urea',          'Urea (mg/dL)'),
-          hcLAB('creatinina',    'Creatinina (mg/dL)')
-        ),
-        div({style:{marginTop:12}},
+        // G — Laboratorio
+        HCSec({icono:'🔬', titulo:'G — Datos de laboratorio', children:[
+          div({className:'lab-grid'},
+            hcLAB('glucemia',      'Glucemia (mg/dL)'),
+            hcLAB('colesterolTotal','Colesterol total (mg/dL)'),
+            hcLAB('hdl',           'HDL (mg/dL)'),
+            hcLAB('ldl',           'LDL (mg/dL)'),
+            hcLAB('trigliceridos', 'Triglicéridos (mg/dL)'),
+            hcLAB('hemoglobina',   'Hemoglobina (g/dL)'),
+            hcLAB('ferritina',     'Ferritina (ng/mL)'),
+            hcLAB('vitamD',        'Vitamina D (ng/mL)'),
+            hcLAB('tsh',           'TSH (mUI/L)'),
+            hcLAB('urea',          'Urea (mg/dL)'),
+            hcLAB('creatinina',    'Creatinina (mg/dL)')
+          ),
+          div({style:{marginTop:12}},
           div({className:'hc-campo'},
             e('label',{}, 'Otros valores relevantes'),
             e('textarea',{rows:2, readOnly:!hcEdit, value:(hc.lab||{}).otrosLab||'', onChange:ev=>setHc({...hc,lab:{...(hc.lab||{}),otrosLab:ev.target.value}}), placeholder:hcEdit?'Otros analíticos importantes...':'', style:{width:'100%',padding:'10px 12px',border:'1.5px solid #e2e8e0',borderRadius:'var(--radius-sm)',fontFamily:'DM Sans,sans-serif',fontSize:'.875rem',resize:'vertical',outline:'none',background:hcEdit?'white':'var(--cream)'}})
           )
         )
-      ]})
-,
-      // Botón Guardar al final de la HC
-      hcEdit && can('editPac') && div({style:{display:'flex',gap:8,justifyContent:'flex-end',marginTop:20,paddingTop:16,borderTop:'2px solid var(--cream-dark)'}},
-        Btn({cls:'btn-secondary',sm:true,onClick:()=>{ setHc({...HC_INIT,...(pac.hc||{})}); setHcEdit(false); }}, 'Cancelar'),
-        Btn({sm:true,onClick:saveHC,disabled:hcSaving}, hcSaving?'Guardando...':'💾 Guardar Historia Clínica')
-      )
+      ]}),
+        // Botón Guardar al final de la HC
+        hcEdit && can('editPac') && div({style:{display:'flex',gap:8,justifyContent:'flex-end',marginTop:20,paddingTop:16,borderTop:'2px solid var(--cream-dark)'}},
+          Btn({cls:'btn-secondary',sm:true,onClick:()=>{ seleccionarHC(hcSelId); }}, 'Cancelar'),
+          Btn({sm:true,onClick:saveHC,disabled:hcSaving}, hcSaving?'Guardando...':'💾 Guardar Historia Clínica')
+        )
+      ) // cierre historias.length > 0 &&
     ),
 
     // ── TAB: Consultas ───────────────────────────────────────────────────────
