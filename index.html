@@ -168,7 +168,7 @@ textarea{resize:vertical;min-height:80px}
 .plan-card p{font-size:.78rem;color:var(--text-muted)}
 .restricted-banner{background:#fff7ed;border:1px solid #fed7aa;border-radius:var(--radius-sm);padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px;font-size:.82rem;color:#c2410c}
 .ingreso-icon{width:36px;height:36px;border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;font-size:1rem;flex-shrink:0}
-.ingreso-icon.consulta{background:var(--green-mist)}.ingreso-icon.ebook{background:#fef3c7}.ingreso-icon.pack{background:#dbeafe}
+.ingreso-icon.consulta{background:var(--green-mist)}.ingreso-icon.ebook{background:#fef3c7}.ingreso-icon.pack{background:#dbeafe}.ingreso-icon.seña{background:#fff7ed}
 .usuario-card{display:flex;align-items:flex-start;gap:16px;padding:18px 20px;background:white;border-radius:var(--radius);border:1px solid rgba(0,0,0,.04);box-shadow:var(--shadow-sm);margin-bottom:12px}
 .uavlg{width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1rem;font-weight:700;flex-shrink:0}
 .uavlg.admin{background:#fef3c7;color:#92400e}.uavlg.asistente{background:var(--green-mist);color:var(--green-deep)}
@@ -306,6 +306,15 @@ textarea{resize:vertical;min-height:80px}
 .drive-link-box a:hover{text-decoration:underline}
 .drive-link-edit{display:flex;gap:8px;margin-bottom:14px}
 .drive-link-edit input{flex:1}
+/* ── Seña / Saldo en FormTurno ───────────────────────────────────────────── */
+.senia-box{background:var(--cream);border:1.5px solid var(--cream-dark);border-radius:var(--radius-sm);padding:14px 16px;margin-top:4px}
+.senia-box .senia-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.senia-box .senia-label{font-size:.72rem;font-weight:600;color:var(--text-mid);text-transform:uppercase;letter-spacing:.8px;min-width:60px}
+.senia-box .senia-input{width:120px;padding:8px 10px;border:1.5px solid #e2e8e0;border-radius:var(--radius-sm);font-family:'DM Sans',sans-serif;font-size:.875rem;outline:none;background:white}
+.senia-box .senia-input:focus{border-color:var(--green-light)}
+.senia-box .senia-mp{flex:1;min-width:140px;padding:8px 10px;border:1.5px solid #e2e8e0;border-radius:var(--radius-sm);font-family:'DM Sans',sans-serif;font-size:.875rem;outline:none;background:white}
+.senia-saldo-calc{margin-top:8px;padding:8px 12px;background:white;border-radius:var(--radius-sm);border:1px solid var(--cream-dark);font-size:.82rem;color:var(--text-mid);display:flex;gap:20px}
+.senia-saldo-calc strong{color:var(--green-mid)}
 /* ── Seguimiento panel ───────────────────────────────────────────────────── */
 .seguimiento-list{display:flex;flex-direction:column;gap:10px}
 .seguimiento-item{display:flex;align-items:center;gap:14px;padding:12px 16px;background:white;border-radius:var(--radius-sm);border-left:3px solid #f59e0b;box-shadow:var(--shadow-sm)}
@@ -613,15 +622,20 @@ function App() {
     listen('ebooks', setEbooks);
     listen('consultorios', setConsultorios);
     // Escuchar todas las HCs para construir mapa pacienteId → estadoClinico más reciente
-    const qHC = query(collectionGroup(db,'historias_clinicas'), orderBy('fechaConsulta','desc'));
-    unsubs.push(onSnapshot(qHC, snap => {
-      const map = {};
+    // Sin orderBy para evitar requerir índice compuesto en Firestore
+    unsubs.push(onSnapshot(collectionGroup(db,'historias_clinicas'), snap => {
+      // Agrupar por paciente y quedarse con la HC de fecha más reciente
+      const porPac = {};
       snap.docs.forEach(d => {
-        // El path es: pacientes/{pacId}/historias_clinicas/{hcId}
         const pacId = d.ref.parent.parent.id;
-        const ec = d.data().estadoClinico;
-        if (ec && !map[pacId]) map[pacId] = ec; // solo toma la primera (más reciente por orderBy desc)
+        const data  = d.data();
+        if (!data.fechaConsulta) return;
+        if (!porPac[pacId] || data.fechaConsulta > porPac[pacId].fecha) {
+          porPac[pacId] = { fecha: data.fechaConsulta, ec: data.estadoClinico || '' };
+        }
       });
+      const map = {};
+      Object.entries(porPac).forEach(([pacId, {ec}]) => { if (ec) map[pacId] = ec; });
       setEcMap(map);
     }, err => console.warn('ecMap listener:', err.message)));
     if (isAdmin) {
@@ -760,7 +774,28 @@ function App() {
     const ref  = await addFB('turnos', t);
     const cons = consultorios.find(c=>c.id===t.consultorioId);
     const url  = gcalUrl({...t, id:ref.id, consultorioNombre:cons?cons.nombre:''});
-    showToast('✅ Turno agendado — <a href="'+url+'" target="_blank" style="color:#fff;font-weight:700;text-decoration:underline">📅 Agregar a Google Calendar</a>');
+    // Auto-cobro de seña si se completó
+    if (t.senia && Number(t.senia) > 0) {
+      const comisionPct   = cons?.comision ? Number(cons.comision) : 0;
+      const montoComision = comisionPct > 0 ? Math.round(Number(t.senia) * comisionPct / 100) : 0;
+      await addFB('ingresos', {
+        descripcion:       '💰 Seña — ' + t.pacienteNombre + ' (' + t.fecha + ')',
+        tipo:              'seña',
+        fecha:             today(),
+        monto:             Number(t.senia),
+        montoNeto:         Number(t.senia) - montoComision,
+        montoComision,
+        comisionPct,
+        metodoPago:        t.metodoPagoSenia || 'Transferencia',
+        consultorioId:     t.consultorioId || '',
+        consultorioNombre: cons ? cons.nombre : '',
+        turnoId:           ref.id,
+        origenSenia:       true,
+      });
+      showToast('✅ Turno agendado + seña de $'+Number(t.senia).toLocaleString('es-AR')+' registrada — <a href="'+url+'" target="_blank" style="color:#fff;font-weight:700;text-decoration:underline">📅 Google Calendar</a>');
+    } else {
+      showToast('✅ Turno agendado — <a href="'+url+'" target="_blank" style="color:#fff;font-weight:700;text-decoration:underline">📅 Agregar a Google Calendar</a>');
+    }
     navigate('agenda');
   }
 }),
@@ -2260,12 +2295,12 @@ function Finanzas({ingresos, consultorios, can, onDel}) {
     )
     .sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
 
-  const tot = ['consulta','ebook','pack'].reduce((acc,t)=>{ acc[t]=ingresos.filter(i=>i.tipo===t&&(i.fecha||'').startsWith(mes)).reduce((s,i)=>s+Number(i.monto||0),0); return acc; },{});
+  const tot = ['consulta','seña','ebook','pack'].reduce((acc,t)=>{ acc[t]=ingresos.filter(i=>i.tipo===t&&(i.fecha||'').startsWith(mes)).reduce((s,i)=>s+Number(i.monto||0),0); return acc; },{});
   const totalBruto    = filtered.reduce((s,i)=>s+Number(i.monto||0),0);
   const totalComision = filtered.reduce((s,i)=>s+Number(i.montoComision||0),0);
   const totalNeto     = totalBruto - totalComision;
 
-  const icons = {consulta:'🩺',ebook:'📖',pack:'📦',alquiler:'🏠'};
+  const icons = {consulta:'🩺', seña:'💰', ebook:'📖', pack:'📦', alquiler:'🏠'};
 
   // ── Resumen por consultorio (para el mes seleccionado) ───────────────────
   const diasDelMes = (() => {
@@ -2299,11 +2334,11 @@ function Finanzas({ingresos, consultorios, can, onDel}) {
     !can('delIngreso') && div({className:'restricted-banner'}, '🔒 No podés eliminar ingresos ya registrados'),
 
     // Stats
-    div({className:'stats-grid',style:{gridTemplateColumns:'repeat(4,1fr)',marginBottom:20}},
-      ...['consulta','ebook','pack'].map(t=>div({key:t,className:'stat-card'},
+    div({className:'stats-grid',style:{gridTemplateColumns:'repeat(5,1fr)',marginBottom:20}},
+      ...['consulta','seña','ebook','pack'].map(t=>div({key:t,className:'stat-card'},
         span({className:'stat-icon'},icons[t]),
-        div({className:'stat-value',style:{fontSize:'1.25rem'}},ars(tot[t])),
-        div({className:'stat-label'},{consulta:'Consultas',ebook:'Ebooks',pack:'Packs'}[t])
+        div({className:'stat-value',style:{fontSize:'1.1rem'}},ars(tot[t])),
+        div({className:'stat-label'},{consulta:'Consultas',seña:'Señas',ebook:'Ebooks',pack:'Packs'}[t])
       )),
       div({className:'stat-card fin-stat-neto'},
         span({className:'stat-icon'},'💵'),
@@ -2321,7 +2356,7 @@ function Finanzas({ingresos, consultorios, can, onDel}) {
     // ── VISTA MOVIMIENTOS ──────────────────────────────────────────────────
     vistaTab==='movimientos' && div({},
       div({style:{display:'flex',gap:8,marginBottom:16,flexWrap:'wrap',alignItems:'center'}},
-        ...['todos','consulta','ebook','pack'].map(f=>Btn({key:f,cls:filter===f?'btn-primary':'btn-secondary',sm:true,onClick:()=>setFilter(f)}, {todos:'Todos',consulta:'Consultas',ebook:'Ebooks',pack:'Packs'}[f])),
+        ...['todos','consulta','seña','ebook','pack'].map(f=>Btn({key:f,cls:filter===f?'btn-primary':'btn-secondary',sm:true,onClick:()=>setFilter(f)}, {todos:'Todos',consulta:'Consultas',seña:'Señas',ebook:'Ebooks',pack:'Packs'}[f])),
         // Filtro por consultorio
         consultorios.length > 0 && e('select',{
           value:filtCons, onChange:ev=>setFiltCons(ev.target.value),
@@ -2350,8 +2385,8 @@ function Finanzas({ingresos, consultorios, can, onDel}) {
             const tieneComision = i.montoComision > 0;
             const neto = i.montoNeto || i.monto;
             return tr_({key:i.id},
-              td_({},[div({style:{display:'flex',alignItems:'center',gap:10}}, div({className:`ingreso-icon ${i.tipo}`},icons[i.tipo]||'💰'), div({}, span({style:{fontWeight:500,display:'block'}},i.descripcion), i.origenTurno && span({style:{fontSize:'.68rem',color:'var(--text-muted)'}}, '📅 Auto-cobro')))]),
-              td_({}, Badge({cls:i.tipo==='consulta'?'bg':i.tipo==='ebook'?'by':i.tipo==='alquiler'?'br':'bb'}, i.tipo)),
+              td_({},[div({style:{display:'flex',alignItems:'center',gap:10}}, div({className:`ingreso-icon ${i.tipo==='seña'?'pack':i.tipo}`},icons[i.tipo]||'💰'), div({}, span({style:{fontWeight:500,display:'block'}},i.descripcion), i.origenTurno && span({style:{fontSize:'.68rem',color:'var(--text-muted)'}}, '📅 Auto-cobro'), i.origenSenia && span({style:{fontSize:'.68rem',color:'#f59e0b',fontWeight:600}}, ' 💰 Seña')))]),
+              td_({}, Badge({cls:i.tipo==='consulta'?'bg':i.tipo==='seña'?'bgold':i.tipo==='ebook'?'by':i.tipo==='alquiler'?'br':'bb'}, i.tipo)),
               td_({style:{color:'var(--text-muted)',fontSize:'.82rem'}}, i.fecha),
               td_({style:{fontSize:'.78rem'}}, i.consultorioNombre || '-'),
               td_({style:{fontSize:'.82rem'}}, i.metodoPago),
@@ -2709,6 +2744,7 @@ function FormTurno({pacs, consultorios, turnos, onSave, onCancel, onAddPac, init
   const [f, setF] = useState({
     pacienteId:'', pacienteNombre:'', fecha:initialFecha||today(), hora:'09:00',
     tipo:'Consulta de seguimiento', estado:'Confirmado', monto:15000,
+    senia:0, metodoPagoSenia:'Transferencia',
     notas:'', consultorioId:'', consultorioNombre:''
   });
   // Sub-form nuevo paciente
@@ -2882,7 +2918,32 @@ function FormTurno({pacs, consultorios, turnos, onSave, onCancel, onAddPac, init
             ...['Primera consulta','Consulta de seguimiento','Control mensual','Control de analisis','Videoconsulta'].map(o=>e('option',{key:o},o))
           )
         ),
-        div({className:'form-group'},lbl({},'Monto (ARS)'),inp({type:'number',value:f.monto,onChange:ev=>setF({...f,monto:Number(ev.target.value)})})),
+        div({className:'form-group'},lbl({},'Monto total (ARS)'),inp({type:'number',value:f.monto,onChange:ev=>setF({...f,monto:Number(ev.target.value)})})),
+
+        // ── Seña y Saldo ──────────────────────────────────────────────────
+        div({className:'form-group full'},
+          lbl({}, 'Seña y saldo'),
+          div({className:'senia-box'},
+            div({className:'senia-row'},
+              span({className:'senia-label'}, '💰 Seña'),
+              e('input',{type:'number', className:'senia-input', placeholder:'0',
+                value: f.senia||'',
+                onChange: ev => setF({...f, senia: Number(ev.target.value)||0})
+              }),
+              e('select',{className:'senia-mp',
+                value: f.metodoPagoSenia,
+                onChange: ev => setF({...f, metodoPagoSenia: ev.target.value})
+              },
+                ...['Transferencia','Efectivo','BBVA','Banco Provincia','Mercado Pago','Otros'].map(o=>e('option',{key:o,value:o},o))
+              )
+            ),
+            f.monto > 0 && div({className:'senia-saldo-calc'},
+              e('span',{}, 'Total: ', e('strong',{}, '$ '+Number(f.monto).toLocaleString('es-AR'))),
+              e('span',{}, 'Seña: ', e('strong',{style:{color:'#f59e0b'}}, '$ '+Number(f.senia||0).toLocaleString('es-AR'))),
+              e('span',{}, 'Saldo a cobrar: ', e('strong',{}, '$ '+Math.max(0, f.monto-(f.senia||0)).toLocaleString('es-AR')))
+            )
+          )
+        ),
         div({className:'form-group'},lbl({},'Estado'),
           e('select',{value:f.estado,onChange:ev=>setF({...f,estado:ev.target.value})},
             e('option',{},'Confirmado'),e('option',{},'Pendiente'),e('option',{},'Cancelado')
