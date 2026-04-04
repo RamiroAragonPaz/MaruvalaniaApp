@@ -1270,8 +1270,34 @@ function PacienteDetalle({pac, navigate, setSelPac, can, showToast, onUpdate, in
   useEffect(() => {
     if (!pac?.id) return;
     const q = query(collection(db, 'pacientes', pac.id, 'historias_clinicas'), orderBy('fechaConsulta','desc'));
-    const unsub = onSnapshot(q, snap => {
+    const unsub = onSnapshot(q, async snap => {
       const docs = snap.docs.map(d => ({id:d.id,...d.data()}));
+
+      // ── Migración automática de HC legacy (guardada en pac.hc) ───────────
+      // Si la subcolección está vacía pero el doc del paciente tiene el campo hc con datos,
+      // lo migramos automáticamente a la subcolección para no perder el trabajo guardado.
+      if (docs.length === 0 && pac.hc && Object.keys(pac.hc).length > 0) {
+        try {
+          const legacyData = {
+            ...HC_INIT,
+            ...pac.hc,
+            fechaConsulta: pac.hc.fechaConsulta || pac.ultimaConsulta || today(),
+            _migradoDesdeLegacy: true,
+          };
+          const ref = await addDoc(
+            collection(db, 'pacientes', pac.id, 'historias_clinicas'),
+            { ...legacyData, creadoEn: serverTimestamp() }
+          );
+          // Limpiamos el campo hc del doc del paciente para no volver a migrar
+          await updateDoc(doc(db, 'pacientes', pac.id), { hc: {} });
+          showToast('✅ Historia clínica previa recuperada automáticamente');
+          // El listener se disparará de nuevo con el doc recién creado
+        } catch(err) {
+          console.warn('Error migrando HC legacy:', err);
+        }
+        return;
+      }
+
       setHistorias(docs);
       // Si no hay HC seleccionada y hay docs, seleccionar la más reciente
       if (docs.length > 0 && !hcSelId) {
